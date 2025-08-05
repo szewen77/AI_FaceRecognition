@@ -1,0 +1,293 @@
+{
+  "cv_scores": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "cv_mean": 1.0,
+  "cv_std": 0.0,
+  "confidences": {
+    "BradPitt": [
+      {
+        "confidence": 0.97404887617377,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 0,
+        "processing_time": 0.0020012855529785156
+      },
+      {
+        "confidence": 0.9788915052223773,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 1,
+        "processing_time": 0.0030014514923095703
+      },
+      {
+        "confidence": 0.975249873296943,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 2,
+        "processing_time": 0.0019986629486083984
+      },
+      {
+        "confidence": 0.9734511121983798,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 3,
+        "processing_time": 0.0035696029663085938
+      },
+      {
+        "confidence": 0.9771131389797973,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 4,
+        "processing_time": 0.0019905567169189453
+      },
+      {
+        "confidence": 0.9766333414892581,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 5,
+        "processing_time": 0.0023093223571777344
+      },
+      {
+        "confidence": 0.9733829895533539,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 6,
+        "processing_time": 0.0019903182983398438
+      },
+      {
+        "confidence": 0.9769916161603576,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 7,
+        "processing_time": 0.0035076141357421875
+      },
+      {
+        "confidence": 0.9740576939487007,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 8,
+        "processing_time": 0.002013683319091797
+      },
+      {
+        "confidence": 0.9801237737162904,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 9,
+        "processing_time": 0.0024955272674560547
+      },
+      {
+        "confidence": 0.9745771553557411,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 10,
+        "processing_time": 0.00202178955078125
+      },
+      {
+        "confidence": 0.9734230609246919,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 11,
+        "processing_time": 0.0020008087158203125
+      },
+      {
+        "confidence": 0.9733963166366968,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 12,
+        "processing_time": 0.002327442169189453
+      },
+      {
+        "confidence": 0.974810777926158,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 13,
+        "processing_time": 0.001998424530029297
+      },
+      {
+        "confidence": 0.9733963174000213,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 14,
+        "processing_time": 0.0019893646240234375
+      },
+      {
+        "confidence": 0.9733840841269532,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 15,
+        "processing_time": 0.002032041549682617
+      },
+      {
+        "confidence": 0.9762409680400879,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 16,
+        "processing_time": 0.0035653114318847656
+      },
+      {
+        "confidence": 0.9783058874479291,
+        "correct": true,
+        "predicted": "BradPitt",
+        "sample_id": 17,
+        "processing_time": 0.0019969940185546875
+      }
+    ],
+    "szewen": [
+      {
+        "confidence": 0.950777368936577,
+        "correct": true,
+        "predicted": "szewen",
+        "sample_id": 18,
+        "processing_time": 0.0022764205932617188
+      },
+      {
+        "confidence": 0.9319246995456898,
+        "correct": true,
+        "predicted": "szewen",
+        "sample_id": 19,
+        "processing_time": 0.001998424530029297
+      },
+      {
+        "confidence": 0.9319982516440084,
+        "correct": true,
+        "predicted": "szewen",
+        "sample_id": 20,
+        "processing_time": 0.0025758743286132812
+      },
+      {
+        "confidence": 0.9320061533819246,
+        "correct": true,
+        "predicted": "szewen",
+        "sample_id": 21,
+        "processing_time": 0.0019724369049072266
+      }
+    ]
+  },
+  "overall_accuracy": 1.0,
+  "avg_confidence": 0.9683720437320776,
+  "avg_processing_time": 0.002346970818259499,
+  "confusion_matrix": [
+    [
+      18,
+      0
+    ],
+    [
+      0,
+      4
+    ]
+  ],
+  "classification_report": {
+    "BradPitt": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 18
+    },
+    "szewen": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 22
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 22
+    }
+  },
+  "unique_labels": [
+    "BradPitt",
+    "szewen"
+  ],
+  "threshold_analysis": [
+    {
+      "threshold": 0.1,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    },
+    {
+      "threshold": 0.2,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    },
+    {
+      "threshold": 0.30000000000000004,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    },
+    {
+      "threshold": 0.4,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    },
+    {
+      "threshold": 0.5,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    },
+    {
+      "threshold": 0.6,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    },
+    {
+      "threshold": 0.7000000000000001,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    },
+    {
+      "threshold": 0.8,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    },
+    {
+      "threshold": 0.9,
+      "accuracy": 1.0,
+      "acceptance_rate": 1.0,
+      "correct": 22,
+      "accepted": 22,
+      "total": 22
+    }
+  ],
+  "benchmark": {
+    "avg_prediction_time": 0.0023263907432556153,
+    "predictions_per_second": 429.850403634504
+  }
+}

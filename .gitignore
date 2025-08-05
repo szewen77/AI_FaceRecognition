@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Model files
+*.pkl
+*.h5
+*.pt
+*.pth
+models/
+
+# Database
+*.db
+*.sqlite
+attendance.db
+
+# Images and data
+*.jpg
+*.jpeg
+*.png
+*.bmp
+dataset/
+imageFolder/
+
+# Screenshots
+screenshot_*.jpg
+attendance_report_*.csv
+
+# Environment
+.env
+.venv
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db 
