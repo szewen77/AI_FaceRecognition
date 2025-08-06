@@ -7,40 +7,40 @@ build/
 dist/
 *.egg-info/
 
-# Model files
-*.pkl
-*.h5
-*.pt
-*.pth
-models/
+# # Model files 
+# *.pkl
+# *.h5
+# *.pt
+# *.pth
+# models/
 
-# Database
-*.db
-*.sqlite
-attendance.db
+# Database - 
+# *.db
+# *.sqlite  
+# attendance.db
 
-# Images and data
-*.jpg
-*.jpeg
-*.png
-*.bmp
-dataset/
-imageFolder/
+# Images and data - 
+# *.jpg
+# *.jpeg
+# *.png
+# *.bmp
+# dataset/
+# imageFolder/
 
-# Screenshots
+# Screenshots (keep blocked - these are temporary)
 screenshot_*.jpg
 attendance_report_*.csv
 
-# Environment
+# Environment (keep blocked - should never be shared)
 .env
 .venv
 venv/
 env/
 
-# IDE
+# IDE (keep blocked)
 .vscode/
 .idea/
 
-# OS
+# OS (keep blocked)
 .DS_Store
-Thumbs.db 
+Thumbs.db
