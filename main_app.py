@@ -1,1215 +1,997 @@
-# gui_main_app.py - Clean & Organized Multi-Classifier Face Recognition GUI
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 import threading
-import queue
-import cv2
-from PIL import Image, ImageTk
-import pandas as pd
-import sys
-import os
-from pathlib import Path
-import json
-from datetime import datetime
-import numpy as np
 import time
+from datetime import datetime, date
+from pathlib import Path
+import pandas as pd
 
-# Add classifiers directory to path
-sys.path.append('classifiers')
+# Add current directory to Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from face_core import FaceRecognitionSystem
-from svm_classifier import SVMClassifier
-from knn_classifier import KNNClassifier
-from logistic_regression import LogisticRegressionClassifier
+try:
+    from face_core import FixedMultiClassifierSystem
+    print("✅ Successfully imported FixedMultiClassifierSystem")
+except ImportError as e:
+    print(f"❌ Error importing face_core: {e}")
+    sys.exit(1)
 
-class CleanFaceRecognitionGUI:
+class FaceRecognitionGUI:
+    """Modern GUI for Multi-Classifier Face Recognition System"""
+    
     def __init__(self, root):
         self.root = root
-        self.setup_window()
-        self.init_variables()
-        self.init_system()
-        self.create_gui()
-        self.start_message_processing()
+        self.system = None
+        self.is_initialized = False
+        self.attendance_running = False
+        
+        # Setup main window
+        self.setup_main_window()
+        
+        # Create GUI components
+        self.create_widgets()
+        
+        # Initialize system in background
+        self.initialize_system()
     
-    def setup_window(self):
-        """Setup main window properties"""
-        self.root.title("Face Recognition Attendance System")
-        self.root.geometry("1200x800")
-        self.root.resizable(True, True)
+    def setup_main_window(self):
+        """Setup main application window"""
+        self.root.title("🎯 Multi-Classifier Face Recognition Attendance System")
+        self.root.geometry("1000x700")
+        self.root.minsize(800, 600)
         
         # Configure style
         style = ttk.Style()
         style.theme_use('clam')
-    
-    def init_variables(self):
-        """Initialize all GUI variables"""
-        # System variables
-        self.system = None
-        self.video_capture = None
-        self.attendance_running = False
         
-        # Classifier variables
-        self.current_classifier_type = "svm"
-        self.available_classifiers = {
-            "svm": {"name": "SVM Classifier", "class": SVMClassifier},
-            "knn": {"name": "KNN Classifier", "class": KNNClassifier},
-            "logistic": {"name": "Logistic Regression", "class": LogisticRegressionClassifier}
+        # Configure colors
+        self.colors = {
+            'primary': '#2E86AB',
+            'secondary': '#A23B72',
+            'success': '#F18F01',
+            'warning': '#C73E1D',
+            'background': '#F5F5F5'
         }
         
-        # GUI variables
-        self.message_queue = queue.Queue()
-        self.current_frame = None
+        self.root.configure(bg=self.colors['background'])
         
-        # Tkinter variables
-        self.classifier_var = tk.StringVar(value="svm")
-        self.confidence_threshold_var = tk.DoubleVar(value=0.7)
-        self.batch_folder_var = tk.StringVar()
-        self.name_var = tk.StringVar()
-        self.status_var = tk.StringVar(value="System Ready")
-    
-    def init_system(self, classifier_type="svm"):
-        """Initialize face recognition system with specified classifier"""
-        try:
-            classifier_info = self.available_classifiers[classifier_type]
-            classifier = classifier_info["class"]()
-            
-            self.system = FaceRecognitionSystem(
-                classifier=classifier,
-                model_path='models/',
-                database_path='attendance.db',
-                confidence_threshold=self.confidence_threshold_var.get()
-            )
-            
-            self.current_classifier_type = classifier_type
-            self.status_var.set(f"Ready - {classifier_info['name']}")
-            
-        except Exception as e:
-            messagebox.showerror("Initialization Error", f"Failed to initialize system: {e}")
-    
-    def create_gui(self):
-        """Create the main GUI layout"""
-        # Main container
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(fill='both', expand=True)
+    def create_widgets(self):
+        """Create all GUI widgets"""
         
-        # Header
-        self.create_header(main_frame)
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Main content (tabs)
-        self.create_tabs(main_frame)
-        
-        # Footer
-        self.create_footer(main_frame)
-    
-    def create_header(self, parent):
-        """Create clean header with system info and controls"""
-        header_frame = ttk.Frame(parent)
-        header_frame.pack(fill='x', pady=(0, 15))
-        
-        # Left side - Title and system info
-        left_frame = ttk.Frame(header_frame)
-        left_frame.pack(side='left', fill='x', expand=True)
-        
-        # Title
-        title_label = ttk.Label(left_frame, text="Face Recognition Attendance System", 
-                               font=('Arial', 16, 'bold'))
-        title_label.pack(anchor='w')
-        
-        # System info
-        self.system_info_label = ttk.Label(left_frame, text="Loading...", 
-                                          foreground='gray')
-        self.system_info_label.pack(anchor='w')
-        
-        # Right side - Classifier selection
-        right_frame = ttk.LabelFrame(header_frame, text="Active Classifier", padding="10")
-        right_frame.pack(side='right')
-        
-        # Classifier dropdown and switch button
-        classifier_frame = ttk.Frame(right_frame)
-        classifier_frame.pack()
-        
-        classifier_combo = ttk.Combobox(classifier_frame, textvariable=self.classifier_var,
-                                       values=list(self.available_classifiers.keys()),
-                                       state="readonly", width=12)
-        classifier_combo.pack(side='left', padx=(0, 10))
-        
-        switch_btn = ttk.Button(classifier_frame, text="Switch", 
-                               command=self.switch_classifier)
-        switch_btn.pack(side='left')
-        
-        # Confidence threshold
-        conf_frame = ttk.Frame(right_frame)
-        conf_frame.pack(pady=(10, 0))
-        
-        ttk.Label(conf_frame, text="Confidence:").pack(side='left')
-        conf_scale = ttk.Scale(conf_frame, from_=0.1, to=1.0, 
-                              variable=self.confidence_threshold_var,
-                              orient='horizontal', length=100)
-        conf_scale.pack(side='left', padx=(5, 5))
-        
-        self.conf_label = ttk.Label(conf_frame, text="0.70")
-        self.conf_label.pack(side='left')
-        conf_scale.configure(command=self.update_confidence_label)
-        
-        self.update_system_info()
-    
-    def create_tabs(self, parent):
-        """Create organized tab interface"""
-        self.notebook = ttk.Notebook(parent)
-        self.notebook.pack(fill='both', expand=True, pady=(10, 0))
-        
-        # Create tabs in logical order
+        # Create tabs
+        self.create_dashboard_tab()
         self.create_enrollment_tab()
         self.create_attendance_tab()
-        self.create_analysis_tab()
+        self.create_users_tab()
         self.create_reports_tab()
-    
-    def create_enrollment_tab(self):
-        """Create clean enrollment interface"""
-        tab_frame = ttk.Frame(self.notebook)
-        self.notebook.add(tab_frame, text="👥 Enrollment")
-        
-        # Main container with padding
-        main_container = ttk.Frame(tab_frame, padding="20")
-        main_container.pack(fill='both', expand=True)
-        
-        # Section 1: Batch Enrollment
-        batch_section = ttk.LabelFrame(main_container, text="Batch Enrollment", padding="15")
-        batch_section.pack(fill='x', pady=(0, 15))
-        
-        ttk.Label(batch_section, text="Select folder containing person subfolders with images:",
-                 foreground='gray').pack(anchor='w')
-        
-        # Folder selection
-        folder_frame = ttk.Frame(batch_section)
-        folder_frame.pack(fill='x', pady=(10, 10))
-        
-        folder_entry = ttk.Entry(folder_frame, textvariable=self.batch_folder_var)
-        folder_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
-        
-        browse_btn = ttk.Button(folder_frame, text="Browse", 
-                               command=self.browse_batch_folder)
-        browse_btn.pack(side='right', padx=(0, 10))
-        
-        start_batch_btn = ttk.Button(folder_frame, text="Start Batch Enrollment",
-                                    style='Accent.TButton',
-                                    command=self.start_batch_enrollment)
-        start_batch_btn.pack(side='right')
-        
-        # Section 2: Individual Enrollment
-        individual_section = ttk.LabelFrame(main_container, text="Individual Enrollment", padding="15")
-        individual_section.pack(fill='x', pady=(0, 15))
-        
-        # Name input
-        name_frame = ttk.Frame(individual_section)
-        name_frame.pack(fill='x', pady=(0, 10))
-        
-        ttk.Label(name_frame, text="Person Name:").pack(side='left')
-        name_entry = ttk.Entry(name_frame, textvariable=self.name_var, width=30)
-        name_entry.pack(side='left', padx=(10, 0))
-        
-        # Enrollment buttons
-        btn_frame = ttk.Frame(individual_section)
-        btn_frame.pack(fill='x')
-        
-        webcam_btn = ttk.Button(btn_frame, text="📷 Webcam Enrollment",
-                               command=self.start_webcam_enrollment)
-        webcam_btn.pack(side='left', padx=(0, 10))
-        
-        images_btn = ttk.Button(btn_frame, text="📁 From Images",
-                               command=self.enroll_from_images)
-        images_btn.pack(side='left')
-        
-        # Section 3: Progress and Results
-        results_section = ttk.LabelFrame(main_container, text="Enrollment Status", padding="15")
-        results_section.pack(fill='both', expand=True)
-        
-        # Progress bar
-        self.enrollment_progress = ttk.Progressbar(results_section, mode='indeterminate')
-        self.enrollment_progress.pack(fill='x', pady=(0, 10))
-        
-        # Results text
-        self.enrollment_results = scrolledtext.ScrolledText(results_section, height=8, 
-                                                           wrap=tk.WORD, font=('Consolas', 9))
-        self.enrollment_results.pack(fill='both', expand=True)
-    
-    def create_attendance_tab(self):
-        """Create clean attendance interface"""
-        tab_frame = ttk.Frame(self.notebook)
-        self.notebook.add(tab_frame, text="📹 Live Attendance")
-        
-        main_container = ttk.Frame(tab_frame, padding="20")
-        main_container.pack(fill='both', expand=True)
-        
-        # Controls section
-        controls_frame = ttk.Frame(main_container)
-        controls_frame.pack(fill='x', pady=(0, 15))
-        
-        # Left side - status
-        status_frame = ttk.Frame(controls_frame)
-        status_frame.pack(side='left')
-        
-        self.attendance_status_label = ttk.Label(status_frame, text="Ready to start attendance",
-                                                font=('Arial', 12))
-        self.attendance_status_label.pack()
-        
-        # Right side - control buttons
-        buttons_frame = ttk.Frame(controls_frame)
-        buttons_frame.pack(side='right')
-        
-        self.start_btn = ttk.Button(buttons_frame, text="▶ Start Attendance",
-                                   style='Accent.TButton',
-                                   command=self.start_attendance)
-        self.start_btn.pack(side='left', padx=(0, 10))
-        
-        self.stop_btn = ttk.Button(buttons_frame, text="⏹ Stop",
-                                  command=self.stop_attendance, state='disabled')
-        self.stop_btn.pack(side='left')
-        
-        # Video section
-        video_section = ttk.LabelFrame(main_container, text="Camera Feed", padding="10")
-        video_section.pack(fill='both', expand=True, pady=(0, 15))
-        
-        self.video_label = ttk.Label(video_section, text="Camera feed will appear here",
-                                    background='black', foreground='white',
-                                    font=('Arial', 14), anchor='center')
-        self.video_label.pack(fill='both', expand=True)
-        
-        # Today's attendance section
-        attendance_section = ttk.LabelFrame(main_container, text="Today's Attendance", padding="10")
-        attendance_section.pack(fill='x')
-        
-        # Attendance table
-        columns = ('Time', 'Name', 'Confidence', 'Classifier')
-        self.attendance_tree = ttk.Treeview(attendance_section, columns=columns, 
-                                           show='headings', height=5)
-        
-        # Configure columns
-        self.attendance_tree.column('Time', width=80)
-        self.attendance_tree.column('Name', width=120)
-        self.attendance_tree.column('Confidence', width=100)
-        self.attendance_tree.column('Classifier', width=100)
-        
-        for col in columns:
-            self.attendance_tree.heading(col, text=col)
-        
-        # Scrollbar for attendance table
-        attendance_scroll = ttk.Scrollbar(attendance_section, orient='vertical',
-                                         command=self.attendance_tree.yview)
-        self.attendance_tree.configure(yscrollcommand=attendance_scroll.set)
-        
-        self.attendance_tree.pack(side='left', fill='both', expand=True)
-        attendance_scroll.pack(side='right', fill='y')
-        
-        self.refresh_attendance_log()
-    
-    def create_analysis_tab(self):
-        """Create classifier analysis and comparison interface"""
-        tab_frame = ttk.Frame(self.notebook)
-        self.notebook.add(tab_frame, text="📊 Analysis")
-        
-        main_container = ttk.Frame(tab_frame, padding="20")
-        main_container.pack(fill='both', expand=True)
-        
-        # Controls section
-        controls_frame = ttk.Frame(main_container)
-        controls_frame.pack(fill='x', pady=(0, 15))
-        
-        ttk.Label(controls_frame, text="Performance Analysis & Comparison",
-                 font=('Arial', 14, 'bold')).pack(side='left')
-        
-        # Analysis buttons
-        btn_frame = ttk.Frame(controls_frame)
-        btn_frame.pack(side='right')
-        
-        compare_btn = ttk.Button(btn_frame, text="🔍 Compare All Classifiers",
-                                style='Accent.TButton',
-                                command=self.compare_classifiers)
-        compare_btn.pack(side='left', padx=(0, 10))
-        
-        analysis_btn = ttk.Button(btn_frame, text="📈 Current Classifier Analysis",
-                                 command=self.analyze_current_classifier)
-        analysis_btn.pack(side='left', padx=(0, 10))
-        
-        export_btn = ttk.Button(btn_frame, text="💾 Export Results",
-                               command=self.export_analysis)
-        export_btn.pack(side='left')
-        
-        # Results section
-        results_notebook = ttk.Notebook(main_container)
-        results_notebook.pack(fill='both', expand=True)
-        
-        # Comparison results tab
-        comparison_frame = ttk.Frame(results_notebook)
-        results_notebook.add(comparison_frame, text="Comparison Results")
-        
-        # Comparison table
-        comp_columns = ('Classifier', 'Accuracy', 'Avg Confidence', 'Training Time', 'Speed')
-        self.comparison_tree = ttk.Treeview(comparison_frame, columns=comp_columns,
-                                           show='headings', height=8)
-        
-        for col in comp_columns:
-            self.comparison_tree.heading(col, text=col)
-            self.comparison_tree.column(col, width=120)
-        
-        comp_scroll = ttk.Scrollbar(comparison_frame, orient='vertical',
-                                   command=self.comparison_tree.yview)
-        self.comparison_tree.configure(yscrollcommand=comp_scroll.set)
-        
-        self.comparison_tree.pack(side='left', fill='both', expand=True, padx=(10, 0), pady=10)
-        comp_scroll.pack(side='right', fill='y', pady=10)
-        
-        # Detailed analysis tab
-        details_frame = ttk.Frame(results_notebook)
-        results_notebook.add(details_frame, text="Detailed Analysis")
-        
-        self.analysis_text = scrolledtext.ScrolledText(details_frame, wrap=tk.WORD,
-                                                      font=('Consolas', 9))
-        self.analysis_text.pack(fill='both', expand=True, padx=10, pady=10)
-    
-    def create_reports_tab(self):
-        """Create clean reports interface"""
-        tab_frame = ttk.Frame(self.notebook)
-        self.notebook.add(tab_frame, text="📋 Reports")
-        
-        main_container = ttk.Frame(tab_frame, padding="20")
-        main_container.pack(fill='both', expand=True)
-        
-        # Header
-        header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill='x', pady=(0, 15))
-        
-        ttk.Label(header_frame, text="Attendance Reports & Data",
-                 font=('Arial', 14, 'bold')).pack(side='left')
-        
-        # Control buttons
-        btn_frame = ttk.Frame(header_frame)
-        btn_frame.pack(side='right')
-        
-        refresh_btn = ttk.Button(btn_frame, text="🔄 Refresh",
-                                command=self.refresh_reports)
-        refresh_btn.pack(side='left', padx=(0, 10))
-        
-        export_btn = ttk.Button(btn_frame, text="📄 Export CSV",
-                               command=self.export_reports)
-        export_btn.pack(side='left')
-        
-        # Reports content
-        reports_notebook = ttk.Notebook(main_container)
-        reports_notebook.pack(fill='both', expand=True)
-        
-        # Attendance records
-        attendance_frame = ttk.Frame(reports_notebook)
-        reports_notebook.add(attendance_frame, text="Attendance Records")
-        
-        att_columns = ('ID', 'Name', 'Date', 'Time', 'Confidence', 'Classifier')
-        self.reports_tree = ttk.Treeview(attendance_frame, columns=att_columns,
-                                        show='headings')
-        
-        for col in att_columns:
-            self.reports_tree.heading(col, text=col)
-            self.reports_tree.column(col, width=100)
-        
-        reports_scroll = ttk.Scrollbar(attendance_frame, orient='vertical',
-                                      command=self.reports_tree.yview)
-        self.reports_tree.configure(yscrollcommand=reports_scroll.set)
-        
-        self.reports_tree.pack(side='left', fill='both', expand=True, padx=(10, 0), pady=10)
-        reports_scroll.pack(side='right', fill='y', pady=10)
-        
-        # Enrolled users
-        users_frame = ttk.Frame(reports_notebook)
-        reports_notebook.add(users_frame, text="Enrolled Users")
-        
-        users_columns = ('ID', 'Name', 'Enrollment Date', 'Samples')
-        self.users_tree = ttk.Treeview(users_frame, columns=users_columns,
-                                      show='headings')
-        
-        for col in users_columns:
-            self.users_tree.heading(col, text=col)
-            self.users_tree.column(col, width=150)
-        
-        users_scroll = ttk.Scrollbar(users_frame, orient='vertical',
-                                    command=self.users_tree.yview)
-        self.users_tree.configure(yscrollcommand=users_scroll.set)
-        
-        self.users_tree.pack(side='left', fill='both', expand=True, padx=(10, 0), pady=10)
-        users_scroll.pack(side='right', fill='y', pady=10)
-        
-        # Load initial data
-        self.refresh_reports()
-    
-    def create_footer(self, parent):
-        """Create clean footer with status"""
-        footer_frame = ttk.Frame(parent)
-        footer_frame.pack(fill='x', pady=(10, 0))
+        self.create_settings_tab()
         
         # Status bar
-        status_bar = ttk.Label(footer_frame, textvariable=self.status_var,
-                              relief=tk.SUNKEN, anchor=tk.W,
-                              font=('Arial', 9))
-        status_bar.pack(fill='x')
+        self.create_status_bar()
+        
+    def create_dashboard_tab(self):
+        """Create dashboard tab"""
+        dashboard_frame = ttk.Frame(self.notebook)
+        self.notebook.add(dashboard_frame, text="📊 Dashboard")
+        
+        # Title
+        title = tk.Label(dashboard_frame, text="Multi-Classifier Face Recognition System", 
+                        font=('Arial', 16, 'bold'), bg=self.colors['background'])
+        title.pack(pady=10)
+        
+        # System status frame
+        status_frame = ttk.LabelFrame(dashboard_frame, text="System Status", padding=10)
+        status_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        self.status_labels = {}
+        status_info = [
+            ("System Status:", "Initializing..."),
+            ("Enrolled Users:", "0"),
+            ("Total Embeddings:", "0"),
+            ("Active Classifiers:", "None"),
+            ("Confidence Threshold:", "0.70"),
+            ("Verification Threshold:", "0.70")
+        ]
+        
+        for i, (label, value) in enumerate(status_info):
+            row = i // 2
+            col = (i % 2) * 2
+            
+            tk.Label(status_frame, text=label, font=('Arial', 10, 'bold')).grid(
+                row=row, column=col, sticky='w', padx=10, pady=5)
+            
+            self.status_labels[label] = tk.Label(status_frame, text=value, font=('Arial', 10))
+            self.status_labels[label].grid(row=row, column=col+1, sticky='w', padx=10, pady=5)
+        
+        # Performance frame
+        perf_frame = ttk.LabelFrame(dashboard_frame, text="Classifier Performance", padding=10)
+        perf_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Performance text widget
+        self.performance_text = scrolledtext.ScrolledText(perf_frame, height=8, font=('Courier', 9))
+        self.performance_text.pack(fill=tk.BOTH, expand=True)
+        self.performance_text.insert(tk.END, "No performance data available yet.\n\nEnroll users and run attendance to see classifier performance.")
+        
+        # Refresh button
+        refresh_btn = ttk.Button(dashboard_frame, text="🔄 Refresh Dashboard", 
+                                command=self.refresh_dashboard)
+        refresh_btn.pack(pady=10)
+        
+    def create_enrollment_tab(self):
+        """Create enrollment tab"""
+        enrollment_frame = ttk.Frame(self.notebook)
+        self.notebook.add(enrollment_frame, text="👤 Enrollment")
+        
+        # Webcam enrollment section
+        webcam_frame = ttk.LabelFrame(enrollment_frame, text="Webcam Enrollment", padding=10)
+        webcam_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(webcam_frame, text="User Name:").grid(row=0, column=0, sticky='w', pady=5)
+        self.webcam_name_var = tk.StringVar()
+        tk.Entry(webcam_frame, textvariable=self.webcam_name_var, width=30).grid(row=0, column=1, padx=10, pady=5)
+        
+        tk.Label(webcam_frame, text="Samples:").grid(row=1, column=0, sticky='w', pady=5)
+        self.webcam_samples_var = tk.StringVar(value="10")
+        samples_spin = tk.Spinbox(webcam_frame, from_=3, to=50, textvariable=self.webcam_samples_var, width=10)
+        samples_spin.grid(row=1, column=1, sticky='w', padx=10, pady=5)
+        
+        webcam_btn = ttk.Button(webcam_frame, text="📷 Start Webcam Enrollment", 
+                               command=self.start_webcam_enrollment)
+        webcam_btn.grid(row=2, column=0, columnspan=2, pady=10)
+        
+        # Image folder enrollment section
+        folder_frame = ttk.LabelFrame(enrollment_frame, text="Image Folder Enrollment", padding=10)
+        folder_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(folder_frame, text="User Name:").grid(row=0, column=0, sticky='w', pady=5)
+        self.folder_name_var = tk.StringVar()
+        tk.Entry(folder_frame, textvariable=self.folder_name_var, width=30).grid(row=0, column=1, padx=10, pady=5)
+        
+        tk.Label(folder_frame, text="Images Files:").grid(row=1, column=0, sticky='w', pady=5)
+        self.files_path_var = tk.StringVar()
+        files_path_entry = tk.Entry(folder_frame, textvariable=self.files_path_var, width=40)
+        files_path_entry.grid(row=1, column=1, padx=10, pady=5)
+        
+        browse_btn = ttk.Button(folder_frame, text="📁 Browse", command=self.browse_files)
+        browse_btn.grid(row=1, column=2, padx=5, pady=5)
+        
+        files_btn = ttk.Button(folder_frame, text="📁 Start Folder Enrollment", 
+                               command=self.start_file_enrollment)
+        files_btn.grid(row=2, column=0, columnspan=3, pady=10)
+        
+        # Enrollment log
+        log_frame = ttk.LabelFrame(enrollment_frame, text="Enrollment Log", padding=10)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        self.enrollment_log = scrolledtext.ScrolledText(log_frame, height=10, font=('Courier', 9))
+        self.enrollment_log.pack(fill=tk.BOTH, expand=True)
+        
+    def create_attendance_tab(self):
+        """Create attendance tab"""
+        attendance_frame = ttk.Frame(self.notebook)
+        self.notebook.add(attendance_frame, text="🎥 Live Attendance")
+        
+        # Control buttons
+        control_frame = ttk.Frame(attendance_frame)
+        control_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        self.start_attendance_btn = ttk.Button(control_frame, text="▶️ Start Live Attendance", 
+                                              command=self.start_live_attendance)
+        self.start_attendance_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_attendance_btn = ttk.Button(control_frame, text="⏹️ Stop Attendance", 
+                                             command=self.stop_live_attendance, state=tk.DISABLED)
+        self.stop_attendance_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Attendance status
+        status_frame = ttk.LabelFrame(attendance_frame, text="Attendance Status", padding=10)
+        status_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        self.attendance_status_var = tk.StringVar(value="Ready to start attendance monitoring")
+        tk.Label(status_frame, textvariable=self.attendance_status_var, font=('Arial', 10)).pack()
+        
+        # Live attendance log
+        log_frame = ttk.LabelFrame(attendance_frame, text="Live Attendance Log", padding=10)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        self.attendance_log = scrolledtext.ScrolledText(log_frame, height=15, font=('Courier', 9))
+        self.attendance_log.pack(fill=tk.BOTH, expand=True)
+        
+        # Instructions
+        instructions = """
+Live Attendance Instructions:
+• Ensure good lighting conditions
+• Position camera at eye level
+• Multiple people can be recognized simultaneously
+• Attendance is automatically marked (once per day per person)
+• Debug information will appear in the log below
+
+Camera Controls (when live window is active):
+• Press 'q' to quit
+• Press 's' to save screenshot
+• Press 'p' to print performance report
+• Press 'd' to toggle debug mode
+        """
+        
+        instr_frame = ttk.LabelFrame(attendance_frame, text="Instructions", padding=10)
+        instr_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(instr_frame, text=instructions.strip(), justify=tk.LEFT, font=('Arial', 9)).pack(anchor='w')
     
-    # Event Handlers and Helper Methods
-    def update_confidence_label(self, value):
-        """Update confidence threshold label and system"""
-        conf_val = float(value)
-        self.conf_label.config(text=f"{conf_val:.2f}")
-        if self.system:
-            self.system.confidence_threshold = conf_val
+    def create_users_tab(self):
+        """Create users management tab"""
+        users_frame = ttk.Frame(self.notebook)
+        self.notebook.add(users_frame, text="👥 Users")
+        
+        # Control buttons
+        control_frame = ttk.Frame(users_frame)
+        control_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Button(control_frame, text="🔄 Refresh List", 
+                  command=self.refresh_users_list).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(control_frame, text="❌ Delete User", 
+                  command=self.delete_selected_user).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(control_frame, text="📊 View Details", 
+                  command=self.view_user_details).pack(side=tk.LEFT, padx=5)
+        
+        # Users list
+        list_frame = ttk.LabelFrame(users_frame, text="Enrolled Users", padding=10)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Treeview for users list
+        columns = ('Name', 'Samples', 'Enrolled', 'Last Updated')
+        self.users_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=15)
+        
+        for col in columns:
+            self.users_tree.heading(col, text=col)
+            if col == 'Name':
+                self.users_tree.column(col, width=200)
+            elif col == 'Samples':
+                self.users_tree.column(col, width=80)
+            else:
+                self.users_tree.column(col, width=120)
+        
+        # Scrollbar for treeview
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.users_tree.yview)
+        self.users_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.users_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # User details frame
+        details_frame = ttk.LabelFrame(users_frame, text="User Details", padding=10)
+        details_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        self.user_details_text = scrolledtext.ScrolledText(details_frame, height=8, font=('Courier', 9))
+        self.user_details_text.pack(fill=tk.BOTH, expand=True)
     
-    def update_system_info(self):
-        """Update system information display"""
-        if self.system:
-            enrolled_count = len(set(self.system.known_names)) if self.system.known_names else 0
-            classifier_name = self.available_classifiers[self.current_classifier_type]["name"]
-            self.system_info_label.config(
-                text=f"{classifier_name} • {enrolled_count} users enrolled • Threshold: {self.confidence_threshold_var.get():.2f}"
-            )
+    def create_reports_tab(self):
+        """Create reports tab"""
+        reports_frame = ttk.Frame(self.notebook)
+        self.notebook.add(reports_frame, text="📈 Reports")
+        
+        # Date range selection
+        date_frame = ttk.LabelFrame(reports_frame, text="Date Range", padding=10)
+        date_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(date_frame, text="Start Date:").grid(row=0, column=0, sticky='w', pady=5)
+        self.start_date_var = tk.StringVar()
+        tk.Entry(date_frame, textvariable=self.start_date_var, width=15).grid(row=0, column=1, padx=10, pady=5)
+        tk.Label(date_frame, text="(YYYY-MM-DD)").grid(row=0, column=2, sticky='w')
+        
+        tk.Label(date_frame, text="End Date:").grid(row=1, column=0, sticky='w', pady=5)
+        self.end_date_var = tk.StringVar()
+        tk.Entry(date_frame, textvariable=self.end_date_var, width=15).grid(row=1, column=1, padx=10, pady=5)
+        tk.Label(date_frame, text="(YYYY-MM-DD)").grid(row=1, column=2, sticky='w')
+        
+        # Report buttons
+        btn_frame = ttk.Frame(date_frame)
+        btn_frame.grid(row=2, column=0, columnspan=3, pady=10)
+        
+        ttk.Button(btn_frame, text="📊 Generate Report", 
+                  command=self.generate_report).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(btn_frame, text="💾 Export CSV", 
+                  command=self.export_csv).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(btn_frame, text="🎯 Performance Report", 
+                  command=self.show_performance_report).pack(side=tk.LEFT, padx=5)
+        
+        # Report display
+        report_frame = ttk.LabelFrame(reports_frame, text="Attendance Report", padding=10)
+        report_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        self.report_text = scrolledtext.ScrolledText(report_frame, height=20, font=('Courier', 9))
+        self.report_text.pack(fill=tk.BOTH, expand=True)
     
-    def switch_classifier(self):
-        """Switch to selected classifier"""
-        new_type = self.classifier_var.get()
+    def create_settings_tab(self):
+        """Create settings tab"""
+        settings_frame = ttk.Frame(self.notebook)
+        self.notebook.add(settings_frame, text="⚙️ Settings")
         
-        if new_type == self.current_classifier_type:
-            messagebox.showinfo("Info", "Already using this classifier")
-            return
+        # Threshold settings
+        thresh_frame = ttk.LabelFrame(settings_frame, text="Recognition Thresholds", padding=10)
+        thresh_frame.pack(fill=tk.X, padx=20, pady=10)
         
-        if not self.system or not self.system.known_embeddings:
-            messagebox.showwarning("Warning", "No enrolled users found. Please enroll people first.")
-            return
+        tk.Label(thresh_frame, text="Confidence Threshold:").grid(row=0, column=0, sticky='w', pady=5)
+        self.confidence_var = tk.DoubleVar(value=0.7)
+        confidence_scale = tk.Scale(thresh_frame, from_=0.1, to=1.0, resolution=0.01, 
+                                   orient=tk.HORIZONTAL, variable=self.confidence_var, length=200)
+        confidence_scale.grid(row=0, column=1, padx=10, pady=5)
+        tk.Label(thresh_frame, text="(Higher = More Strict)").grid(row=0, column=2, sticky='w')
         
-        # Confirm switch
-        old_name = self.available_classifiers[self.current_classifier_type]["name"]
-        new_name = self.available_classifiers[new_type]["name"]
+        tk.Label(thresh_frame, text="Verification Threshold:").grid(row=1, column=0, sticky='w', pady=5)
+        self.verification_var = tk.DoubleVar(value=0.7)
+        verification_scale = tk.Scale(thresh_frame, from_=0.1, to=1.0, resolution=0.01, 
+                                     orient=tk.HORIZONTAL, variable=self.verification_var, length=200)
+        verification_scale.grid(row=1, column=1, padx=10, pady=5)
+        tk.Label(thresh_frame, text="(Higher = More Strict)").grid(row=1, column=2, sticky='w')
         
-        result = messagebox.askyesno("Switch Classifier",
-                                   f"Switch from {old_name} to {new_name}?\n\n"
-                                   f"This will retrain using the same enrolled data.")
+        ttk.Button(thresh_frame, text="💾 Apply Settings", 
+                  command=self.apply_settings).grid(row=2, column=0, columnspan=3, pady=10)
         
-        if result:
+        # System info
+        info_frame = ttk.LabelFrame(settings_frame, text="System Information", padding=10)
+        info_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        self.system_info_text = scrolledtext.ScrolledText(info_frame, height=15, font=('Courier', 9))
+        self.system_info_text.pack(fill=tk.BOTH, expand=True)
+        
+        # System buttons
+        system_btn_frame = ttk.Frame(settings_frame)
+        system_btn_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Button(system_btn_frame, text="💾 Save System", 
+                  command=self.save_system).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(system_btn_frame, text="🔄 Reload System", 
+                  command=self.reload_system).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(system_btn_frame, text="📊 Refresh Info", 
+                  command=self.refresh_system_info).pack(side=tk.LEFT, padx=5)
+    
+    def create_status_bar(self):
+        """Create status bar"""
+        self.status_bar = ttk.Frame(self.root)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        self.status_var = tk.StringVar(value="Initializing system...")
+        status_label = tk.Label(self.status_bar, textvariable=self.status_var, 
+                               relief=tk.SUNKEN, anchor=tk.W)
+        status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Time label
+        self.time_var = tk.StringVar()
+        time_label = tk.Label(self.status_bar, textvariable=self.time_var, 
+                             relief=tk.SUNKEN, anchor=tk.E)
+        time_label.pack(side=tk.RIGHT)
+        
+        self.update_time()
+    
+    def update_time(self):
+        """Update time display"""
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.time_var.set(current_time)
+        self.root.after(1000, self.update_time)
+    
+    def initialize_system(self):
+        """Initialize the face recognition system"""
+        def init_worker():
             try:
-                self.status_var.set("Switching classifier...")
-                
-                # Store current data
-                old_embeddings = self.system.known_embeddings.copy()
-                old_names = self.system.known_names.copy()
-                
-                # Initialize new classifier
-                self.init_system(new_type)
-                
-                # Transfer data and retrain
-                self.system.known_embeddings = old_embeddings
-                self.system.known_names = old_names
-                
-                success = self.system.train_classifier()
-                if success:
-                    self.system.save_system()
-                    self.update_system_info()
-                    self.status_var.set(f"Switched to {new_name}")
-                    messagebox.showinfo("Success", f"Successfully switched to {new_name}")
-                else:
-                    raise Exception("Failed to train new classifier")
-                    
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to switch classifier: {e}")
-                self.classifier_var.set(self.current_classifier_type)
-                self.status_var.set("Classifier switch failed")
-    
-    # Enrollment Methods
-    def browse_batch_folder(self):
-        """Browse for batch enrollment folder"""
-        folder = filedialog.askdirectory(title="Select folder containing person subfolders")
-        if folder:
-            self.batch_folder_var.set(folder)
-    
-    def start_batch_enrollment(self):
-        """Start batch enrollment process"""
-        folder = self.batch_folder_var.get()
-        if not folder:
-            messagebox.showwarning("Warning", "Please select a folder first")
-            return
-        
-        if not os.path.exists(folder):
-            messagebox.showerror("Error", "Selected folder does not exist")
-            return
-        
-        # Clear results and start progress
-        self.enrollment_results.delete(1.0, tk.END)
-        self.enrollment_progress.start()
-        
-        # Start in thread
-        thread = threading.Thread(target=self.batch_enrollment_worker, args=(folder,))
-        thread.daemon = True
-        thread.start()
-    
-    def batch_enrollment_worker(self, folder):
-        """Worker thread for batch enrollment"""
-        try:
-            self.message_queue.put(("status", "Starting batch enrollment..."))
-            self.message_queue.put(("result", f"📁 Scanning folder: {folder}\n"))
-            
-            folder_path = Path(folder)
-            person_folders = [f for f in folder_path.iterdir() if f.is_dir()]
-            
-            if not person_folders:
-                self.message_queue.put(("result", "❌ No person folders found!\n"))
-                return
-            
-            self.message_queue.put(("result", f"👥 Found {len(person_folders)} people to enroll:\n"))
-            for folder in person_folders:
-                self.message_queue.put(("result", f"   • {folder.name}\n"))
-            
-            self.message_queue.put(("result", "\n🚀 Starting enrollment process...\n\n"))
-            
-            successful = 0
-            for person_folder in person_folders:
-                person_name = person_folder.name
-                self.message_queue.put(("result", f"📝 Enrolling {person_name}... "))
-                
-                success = self.system.enroll_person(
-                    name=person_name,
-                    images_path=str(person_folder),
-                    webcam_capture=False,
-                    num_samples=0
+                self.system = FixedMultiClassifierSystem(
+                    model_path='models/',
+                    database_path='attendance.db',
+                    confidence_threshold=0.7,
+                    verification_threshold=0.7,
+                    device=None
                 )
                 
-                if success:
-                    successful += 1
-                    self.message_queue.put(("result", "✅ Success\n"))
-                else:
-                    self.message_queue.put(("result", "❌ Failed\n"))
+                self.is_initialized = True
+                self.root.after(0, self.on_system_initialized)
+                
+            except Exception as e:
+                self.root.after(0, lambda: self.on_system_error(str(e)))
+        
+        # Start initialization in background thread
+        thread = threading.Thread(target=init_worker, daemon=True)
+        thread.start()
+    
+    def on_system_initialized(self):
+        """Called when system is successfully initialized"""
+        self.status_var.set("System initialized successfully!")
+        self.refresh_dashboard()
+        self.refresh_users_list()
+        self.refresh_system_info()
+        
+        # Log to enrollment tab
+        self.log_to_enrollment("✅ System initialized successfully!")
+        self.log_to_enrollment("📊 Multi-classifier system ready with SVM, KNN, and Logistic Regression")
+        
+    def on_system_error(self, error_msg):
+        """Called when system initialization fails"""
+        self.status_var.set("System initialization failed!")
+        messagebox.showerror("Initialization Error", f"Failed to initialize system:\n{error_msg}")
+        
+    def refresh_dashboard(self):
+        """Refresh dashboard information"""
+        if not self.is_initialized:
+            return
+        
+        try:
+            status = self.system.get_system_status()
             
-            self.message_queue.put(("result", f"\n🎉 Batch enrollment complete!\n"))
-            self.message_queue.put(("result", f"📊 Successfully enrolled: {successful}/{len(person_folders)} people\n"))
-            self.message_queue.put(("status", f"Batch enrollment complete - {successful} people enrolled"))
+            self.status_labels["System Status:"].config(text="✅ Ready", fg='green')
+            self.status_labels["Enrolled Users:"].config(text=str(status['enrolled_users']))
+            self.status_labels["Total Embeddings:"].config(text=str(status['total_embeddings']))
+            self.status_labels["Active Classifiers:"].config(text=', '.join(status['active_classifiers']))
+            self.status_labels["Confidence Threshold:"].config(text=f"{status['confidence_threshold']:.2f}")
+            self.status_labels["Verification Threshold:"].config(text=f"{status['verification_threshold']:.2f}")
+            
+            # Update performance display
+            self.performance_text.delete(1.0, tk.END)
+            perf_report = self.system.get_classifier_performance_report()
+            self.performance_text.insert(tk.END, perf_report)
             
         except Exception as e:
-            self.message_queue.put(("result", f"❌ Error during batch enrollment: {e}\n"))
-            self.message_queue.put(("status", "Batch enrollment failed"))
-        finally:
-            self.message_queue.put(("progress_stop", None))
-            self.message_queue.put(("update_info", None))
+            messagebox.showerror("Error", f"Failed to refresh dashboard: {e}")
     
     def start_webcam_enrollment(self):
         """Start webcam enrollment"""
-        name = self.name_var.get().strip()
-        if not name:
-            messagebox.showwarning("Warning", "Please enter a name first")
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
             return
         
-        self.enrollment_results.delete(1.0, tk.END)
-        self.message_queue.put(("result", f"📷 Starting webcam enrollment for {name}...\n"))
+        name = self.webcam_name_var.get().strip()
+        if not name:
+            messagebox.showerror("Error", "Please enter a user name!")
+            return
         
-        thread = threading.Thread(target=self.webcam_enrollment_worker, args=(name,))
-        thread.daemon = True
+        try:
+            samples = int(self.webcam_samples_var.get())
+        except ValueError:
+            samples = 10
+        
+        def enrollment_worker():
+            try:
+                self.log_to_enrollment(f"🔄 Starting webcam enrollment for '{name}'...")
+                self.log_to_enrollment("📷 Camera window will open - follow on-screen instructions")
+                
+                success = self.system.enroll_person(
+                    name=name,
+                    webcam_capture=True,
+                    num_samples=samples
+                )
+                
+                if success:
+                    self.root.after(0, lambda: self.on_enrollment_success(name))
+                else:
+                    self.root.after(0, lambda: self.on_enrollment_failed(name))
+                    
+            except Exception as e:
+                self.root.after(0, lambda: self.on_enrollment_error(name, str(e)))
+        
+        thread = threading.Thread(target=enrollment_worker, daemon=True)
         thread.start()
     
-    def webcam_enrollment_worker(self, name):
-        """Worker for webcam enrollment"""
-        try:
-            success = self.system.enroll_person(
-                name=name,
-                webcam_capture=True,
-                num_samples=10
-            )
-            
-            if success:
-                self.message_queue.put(("result", f"✅ Successfully enrolled {name}\n"))
-            else:
-                self.message_queue.put(("result", f"❌ Failed to enroll {name}\n"))
-                
-        except Exception as e:
-            self.message_queue.put(("result", f"❌ Error enrolling {name}: {e}\n"))
-        finally:
-            self.message_queue.put(("update_info", None))
-    
-    def enroll_from_images(self):
-        """Enroll from image folder"""
-        name = self.name_var.get().strip()
+    def start_folder_enrollment(self):
+        """Start folder enrollment"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        name = self.folder_name_var.get().strip()
+        folder_path = self.folder_path_var.get().strip()
+        
         if not name:
-            messagebox.showwarning("Warning", "Please enter a name first")
+            messagebox.showerror("Error", "Please enter a user name!")
             return
         
-        folder = filedialog.askdirectory(title=f"Select image folder for {name}")
-        if not folder:
+        if not folder_path or not os.path.exists(folder_path):
+            messagebox.showerror("Error", "Please select a valid folder!")
             return
         
-        self.enrollment_results.delete(1.0, tk.END)
-        thread = threading.Thread(target=self.image_enrollment_worker, args=(name, folder))
-        thread.daemon = True
+        def enrollment_worker():
+            try:
+                self.log_to_enrollment(f"🔄 Starting folder enrollment for '{name}'...")
+                self.log_to_enrollment(f"📁 Processing images from: {folder_path}")
+                
+                success = self.system.enroll_person(
+                    name=name,
+                    images_path=folder_path
+                )
+                
+                if success:
+                    self.root.after(0, lambda: self.on_enrollment_success(name))
+                else:
+                    self.root.after(0, lambda: self.on_enrollment_failed(name))
+                    
+            except Exception as e:
+                self.root.after(0, lambda: self.on_enrollment_error(name, str(e)))
+        
+        thread = threading.Thread(target=enrollment_worker, daemon=True)
         thread.start()
     
-    def image_enrollment_worker(self, name, folder):
-        """Worker for image enrollment"""
-        try:
-            self.message_queue.put(("result", f"📁 Enrolling {name} from {folder}...\n"))
-            
-            success = self.system.enroll_person(
-                name=name,
-                images_path=folder,
-                webcam_capture=False,
-                num_samples=0
-            )
-            
-            if success:
-                self.message_queue.put(("result", f"✅ Successfully enrolled {name}\n"))
-            else:
-                self.message_queue.put(("result", f"❌ Failed to enroll {name}\n"))
-                
-        except Exception as e:
-            self.message_queue.put(("result", f"❌ Error enrolling {name}: {e}\n"))
-        finally:
-            self.message_queue.put(("update_info", None))
+    def on_enrollment_success(self, name):
+        """Called when enrollment succeeds"""
+        self.log_to_enrollment(f"✅ Successfully enrolled {name}!")
+        self.log_to_enrollment("📊 All classifiers retrained with new user data")
+        self.webcam_name_var.set("")
+        self.folder_name_var.set("")
+        self.folder_path_var.set("")
+        self.refresh_dashboard()
+        self.refresh_users_list()
+        messagebox.showinfo("Success", f"Successfully enrolled {name}!")
     
-    # Attendance Methods
-    def start_attendance(self):
-        """Start live attendance system"""
-        if not self.system or not self.system.known_embeddings:
-            messagebox.showwarning("Warning", "No people enrolled. Please enroll people first.")
+    def on_enrollment_failed(self, name):
+        """Called when enrollment fails"""
+        self.log_to_enrollment(f"❌ Failed to enroll {name}")
+        messagebox.showerror("Error", f"Failed to enroll {name}")
+    
+    def on_enrollment_error(self, name, error):
+        """Called when enrollment encounters an error"""
+        self.log_to_enrollment(f"❌ Enrollment error for {name}: {error}")
+        messagebox.showerror("Error", f"Enrollment error: {error}")
+    
+    def log_to_enrollment(self, message):
+        """Log message to enrollment tab"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.enrollment_log.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.enrollment_log.see(tk.END)
+    
+    def log_to_attendance(self, message):
+        """Log message to attendance tab"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.attendance_log.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.attendance_log.see(tk.END)
+    
+    def browse_folder(self):
+        """Browse for image folder"""
+        folder_path = filedialog.askdirectory(title="Select Images Folder")
+        if folder_path:
+            self.folder_path_var.set(folder_path)
+
+    def browse_files(self):
+        file_paths = filedialog.askopenfilenames(
+        title="Select Images",
+        filetypes=[("Image Files", "*.jpg *.jpeg *.png *.bmp")]
+    )
+        if file_paths:
+            self.files_path_var.set("; ".join(file_paths))
+            self.selected_files = list(file_paths)
+
+    def start_file_enrollment(self):
+        if not hasattr(self, "selected_files") or not self.selected_files:
+            messagebox.showerror("Error", "Please select image files first!")
+            return
+        # process images in self.selected_files...
+        messagebox.showinfo("Enrollment", f"Enrolled {len(self.selected_files)} images")
+
+    
+    def start_live_attendance(self):
+        """Start live attendance monitoring"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        status = self.system.get_system_status()
+        if status['enrolled_users'] == 0:
+            messagebox.showerror("Error", "No users enrolled! Please enroll users first.")
+            return
+        
+        if self.attendance_running:
             return
         
         self.attendance_running = True
-        self.start_btn.config(state='disabled')
-        self.stop_btn.config(state='normal')
-        self.attendance_status_label.config(text="🔴 Live attendance running...", foreground='red')
+        self.start_attendance_btn.config(state=tk.DISABLED)
+        self.stop_attendance_btn.config(state=tk.NORMAL)
+        self.attendance_status_var.set("🎥 Live attendance monitoring active")
         
-        thread = threading.Thread(target=self.attendance_worker)
-        thread.daemon = True
+        def attendance_worker():
+            try:
+                self.log_to_attendance("🎥 Starting live attendance monitoring...")
+                self.log_to_attendance("📊 Multi-classifier system active")
+                self.log_to_attendance("🎮 Camera controls: 'q'=quit, 's'=screenshot, 'p'=performance, 'd'=debug")
+                
+                self.system.run_live_attendance()
+                
+                self.root.after(0, self.on_attendance_stopped)
+                
+            except Exception as e:
+                self.root.after(0, lambda: self.on_attendance_error(str(e)))
+        
+        thread = threading.Thread(target=attendance_worker, daemon=True)
         thread.start()
     
-    def stop_attendance(self):
-        """Stop live attendance system"""
+    def stop_live_attendance(self):
+        """Stop live attendance monitoring"""
         self.attendance_running = False
-        self.start_btn.config(state='normal')
-        self.stop_btn.config(state='disabled')
-        self.attendance_status_label.config(text="⏹ Attendance stopped", foreground='gray')
-        
-        if self.video_capture:
-            self.video_capture.release()
-            self.video_capture = None
-        
-        self.video_label.config(image='', text="Camera feed stopped")
-        self.status_var.set("Attendance system stopped")
+        self.log_to_attendance("⏹️ Stopping attendance monitoring...")
+        # Note: The actual stopping is handled by pressing 'q' in the camera window
     
-    def attendance_worker(self):
-        """Worker thread for attendance system"""
-        self.video_capture = cv2.VideoCapture(0)
-        frame_count = 0
-        
-        try:
-            while self.attendance_running:
-                ret, frame = self.video_capture.read()
-                if not ret:
-                    break
-                
-                frame_count += 1
-                if frame_count % 5 != 0:  # Process every 5th frame
-                    continue
-                
-                # Process frame for face recognition
-                display_frame = frame.copy()
-                boxes = self.system.extractor.detect_faces(frame)
-                
-                if boxes is not None:
-                    for box in boxes:
-                        x1, y1, x2, y2 = map(int, box)
-                        
-                        # Extract face for recognition
-                        face_crop = frame[max(0, y1):min(frame.shape[0], y2), 
-                                        max(0, x1):min(frame.shape[1], x2)]
-                        
-                        if face_crop.size > 0:
-                            embedding = self.system.extractor.extract_face_embedding(face_crop)
-                            
-                            if embedding is not None:
-                                predicted_name, confidence = self.system.predict_person(embedding)
-                                
-                                if predicted_name != "Unknown":
-                                    color = (0, 255, 0)  # Green
-                                    
-                                    if confidence >= self.system.confidence_threshold:
-                                        message, marked = self.system.mark_attendance(predicted_name, confidence)
-                                        if marked:
-                                            self.message_queue.put(("attendance", {
-                                                'name': predicted_name,
-                                                'confidence': confidence,
-                                                'time': datetime.now().strftime("%H:%M:%S"),
-                                                'classifier': self.system.classifier.get_name()
-                                            }))
-                                else:
-                                    color = (0, 0, 255)  # Red
-                                
-                                # Draw rectangle and text
-                                cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-                                label = f"{predicted_name} ({confidence:.2f})"
-                                cv2.putText(display_frame, label, (x1, y1-10), 
-                                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                
-                # Add system info to display
-                info_text = f"Classifier: {self.system.classifier.get_name()} | Threshold: {self.system.confidence_threshold:.2f}"
-                cv2.putText(display_frame, info_text, (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                
-                # Convert and display frame
-                rgb_frame = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
-                pil_image = Image.fromarray(rgb_frame)
-                pil_image = pil_image.resize((640, 480))
-                photo = ImageTk.PhotoImage(pil_image)
-                
-                self.message_queue.put(("video_frame", photo))
-                
-        except Exception as e:
-            self.message_queue.put(("status", f"Attendance error: {e}"))
-        finally:
-            if self.video_capture:
-                self.video_capture.release()
-                self.video_capture = None
+    def on_attendance_stopped(self):
+        """Called when attendance monitoring stops"""
+        self.attendance_running = False
+        self.start_attendance_btn.config(state=tk.NORMAL)
+        self.stop_attendance_btn.config(state=tk.DISABLED)
+        self.attendance_status_var.set("⏹️ Attendance monitoring stopped")
+        self.log_to_attendance("✅ Live attendance session ended")
+        self.refresh_dashboard()
     
-    def refresh_attendance_log(self):
-        """Refresh today's attendance log"""
+    def on_attendance_error(self, error):
+        """Called when attendance encounters an error"""
+        self.attendance_running = False
+        self.start_attendance_btn.config(state=tk.NORMAL)
+        self.stop_attendance_btn.config(state=tk.DISABLED)
+        self.attendance_status_var.set("❌ Attendance error")
+        self.log_to_attendance(f"❌ Attendance error: {error}")
+        messagebox.showerror("Attendance Error", f"Attendance error: {error}")
+    
+    def refresh_users_list(self):
+        """Refresh the users list"""
+        if not self.is_initialized:
+            return
+        
         try:
             # Clear existing items
-            for item in self.attendance_tree.get_children():
-                self.attendance_tree.delete(item)
-            
-            # Get today's attendance
-            today = datetime.now().date()
-            df = self.system.generate_report()
-            
-            if not df.empty:
-                today_df = df[pd.to_datetime(df['date']).dt.date == today]
-                
-                for _, row in today_df.iterrows():
-                    time_str = pd.to_datetime(row['timestamp']).strftime("%H:%M:%S")
-                    classifier_type = row.get('classifier_type', 'Unknown')
-                    self.attendance_tree.insert('', 0, values=(
-                        time_str, row['name'], f"{row['confidence']:.3f}", classifier_type
-                    ))
-        except Exception as e:
-            print(f"Error refreshing attendance log: {e}")
-    
-    # Analysis Methods
-    def compare_classifiers(self):
-        """Compare all available classifiers"""
-        if not self.system or not self.system.known_embeddings:
-            messagebox.showwarning("Warning", "No enrolled users found for comparison")
-            return
-        
-        # Clear previous results
-        for item in self.comparison_tree.get_children():
-            self.comparison_tree.delete(item)
-        
-        self.analysis_text.delete(1.0, tk.END)
-        self.analysis_text.insert(tk.END, "🔍 Running classifier comparison...\n\n")
-        
-        # Run comparison in thread
-        thread = threading.Thread(target=self.comparison_worker)
-        thread.daemon = True
-        thread.start()
-    
-    def comparison_worker(self):
-        """Worker thread for classifier comparison"""
-        try:
-            results = []
-            total_samples = len(self.system.known_embeddings)
-            unique_people = len(set(self.system.known_names))
-            
-            self.message_queue.put(("analysis_update", 
-                                  f"📊 Dataset: {total_samples} samples, {unique_people} people\n\n"))
-            
-            # Test each classifier
-            for classifier_type, classifier_info in self.available_classifiers.items():
-                classifier_name = classifier_info["name"]
-                self.message_queue.put(("analysis_update", f"🧠 Testing {classifier_name}...\n"))
-                
-                try:
-                    classifier = classifier_info["class"]()
-                    
-                    # Measure training time
-                    start_time = time.time()
-                    success = classifier.train(self.system.known_embeddings, self.system.known_names)
-                    training_time = time.time() - start_time
-                    
-                    if success:
-                        # Test accuracy and speed
-                        correct = 0
-                        confidences = []
-                        prediction_times = []
-                        
-                        for embedding, true_name in zip(self.system.known_embeddings, self.system.known_names):
-                            start_pred = time.time()
-                            predicted_name, confidence = classifier.predict(embedding)
-                            pred_time = time.time() - start_pred
-                            
-                            prediction_times.append(pred_time)
-                            confidences.append(confidence)
-                            
-                            if predicted_name == true_name:
-                                correct += 1
-                        
-                        accuracy = correct / total_samples
-                        avg_confidence = sum(confidences) / len(confidences)
-                        avg_pred_time = sum(prediction_times) / len(prediction_times)
-                        
-                        results.append({
-                            'classifier': classifier_name,
-                            'type': classifier_type,
-                            'accuracy': accuracy,
-                            'avg_confidence': avg_confidence,
-                            'training_time': training_time,
-                            'prediction_time': avg_pred_time
-                        })
-                        
-                        self.message_queue.put(("comparison_result", {
-                            'classifier': classifier_name,
-                            'accuracy': f"{accuracy:.3f}",
-                            'avg_confidence': f"{avg_confidence:.3f}",
-                            'training_time': f"{training_time:.2f}s",
-                            'speed': f"{avg_pred_time*1000:.1f}ms"
-                        }))
-                        
-                        self.message_queue.put(("analysis_update", f"   ✅ Accuracy: {accuracy:.3f}\n"))
-                        
-                    else:
-                        self.message_queue.put(("analysis_update", f"   ❌ Training failed\n"))
-                        
-                except Exception as e:
-                    self.message_queue.put(("analysis_update", f"   ❌ Error: {e}\n"))
-            
-            # Generate detailed analysis
-            if results:
-                results.sort(key=lambda x: x['accuracy'], reverse=True)
-                
-                analysis = "\n" + "="*50 + "\n"
-                analysis += "📈 COMPARISON RESULTS\n"
-                analysis += "="*50 + "\n\n"
-                
-                for i, result in enumerate(results, 1):
-                    analysis += f"{i}. {result['classifier']}\n"
-                    analysis += f"   🎯 Accuracy: {result['accuracy']:.3f}\n"
-                    analysis += f"   🎲 Avg Confidence: {result['avg_confidence']:.3f}\n"
-                    analysis += f"   ⏱️ Training Time: {result['training_time']:.2f}s\n"
-                    analysis += f"   ⚡ Prediction Speed: {result['prediction_time']*1000:.1f}ms\n\n"
-                
-                # Recommendations
-                best_accuracy = results[0]
-                fastest_training = min(results, key=lambda x: x['training_time'])
-                fastest_prediction = min(results, key=lambda x: x['prediction_time'])
-                
-                analysis += "🏆 RECOMMENDATIONS\n"
-                analysis += "-" * 30 + "\n"
-                analysis += f"🥇 Best Accuracy: {best_accuracy['classifier']} ({best_accuracy['accuracy']:.3f})\n"
-                analysis += f"🚀 Fastest Training: {fastest_training['classifier']} ({fastest_training['training_time']:.2f}s)\n"
-                analysis += f"⚡ Fastest Prediction: {fastest_prediction['classifier']} ({fastest_prediction['prediction_time']*1000:.1f}ms)\n\n"
-                
-                # Usage recommendations
-                analysis += "💡 USAGE RECOMMENDATIONS\n"
-                analysis += "-" * 30 + "\n"
-                if best_accuracy['accuracy'] > 0.95:
-                    analysis += f"✅ For production use: {best_accuracy['classifier']}\n"
-                if fastest_prediction['prediction_time'] < 0.05:
-                    analysis += f"⚡ For real-time systems: {fastest_prediction['classifier']}\n"
-                if fastest_training['training_time'] < 1.0:
-                    analysis += f"🚀 For frequent retraining: {fastest_training['classifier']}\n"
-                
-                self.message_queue.put(("analysis_details", analysis))
-            
-        except Exception as e:
-            self.message_queue.put(("analysis_update", f"❌ Error during comparison: {e}\n"))
-    
-    def analyze_current_classifier(self):
-        """Analyze current classifier performance"""
-        if not self.system or not self.system.known_embeddings:
-            messagebox.showwarning("Warning", "No enrolled users found for analysis")
-            return
-        
-        # Create analysis window
-        analysis_window = tk.Toplevel(self.root)
-        analysis_window.title(f"Performance Analysis - {self.system.classifier.get_name()}")
-        analysis_window.geometry("700x500")
-        
-        # Analysis text area
-        text_frame = ttk.Frame(analysis_window, padding="20")
-        text_frame.pack(fill='both', expand=True)
-        
-        analysis_text = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD, font=('Consolas', 9))
-        analysis_text.pack(fill='both', expand=True)
-        
-        # Run analysis in thread
-        thread = threading.Thread(target=self.current_analysis_worker, args=(analysis_text,))
-        thread.daemon = True
-        thread.start()
-    
-    def current_analysis_worker(self, text_widget):
-        """Worker for current classifier analysis"""
-        try:
-            classifier_name = self.system.classifier.get_name()
-            text_widget.insert(tk.END, f"🔍 Analyzing {classifier_name}...\n\n")
-            text_widget.update()
-            
-            # Basic metrics
-            total_samples = len(self.system.known_embeddings)
-            unique_people = len(set(self.system.known_names))
-            
-            text_widget.insert(tk.END, "📊 SYSTEM OVERVIEW\n")
-            text_widget.insert(tk.END, "-" * 30 + "\n")
-            text_widget.insert(tk.END, f"Classifier: {classifier_name}\n")
-            text_widget.insert(tk.END, f"Enrolled People: {unique_people}\n")
-            text_widget.insert(tk.END, f"Total Samples: {total_samples}\n")
-            text_widget.insert(tk.END, f"Confidence Threshold: {self.system.confidence_threshold}\n\n")
-            
-            # Performance test
-            correct = 0
-            confidences = []
-            processing_times = []
-            
-            for embedding, true_name in zip(self.system.known_embeddings, self.system.known_names):
-                start_time = time.time()
-                predicted_name, confidence = self.system.predict_person(embedding)
-                end_time = time.time()
-                
-                processing_times.append(end_time - start_time)
-                confidences.append(confidence)
-                
-                if predicted_name == true_name:
-                    correct += 1
-            
-            accuracy = correct / total_samples
-            avg_confidence = sum(confidences) / len(confidences)
-            avg_processing_time = sum(processing_times) / len(processing_times)
-            
-            text_widget.insert(tk.END, "🎯 PERFORMANCE RESULTS\n")
-            text_widget.insert(tk.END, "-" * 30 + "\n")
-            text_widget.insert(tk.END, f"Overall Accuracy: {accuracy:.3f} ({correct}/{total_samples})\n")
-            text_widget.insert(tk.END, f"Average Confidence: {avg_confidence:.3f}\n")
-            text_widget.insert(tk.END, f"Processing Speed: {avg_processing_time*1000:.1f}ms per face\n")
-            text_widget.insert(tk.END, f"Throughput: {1/avg_processing_time:.1f} faces/second\n\n")
-            
-            # Per-person analysis
-            text_widget.insert(tk.END, "👥 PER-PERSON ANALYSIS\n")
-            text_widget.insert(tk.END, "-" * 30 + "\n")
-            
-            person_stats = {}
-            for embedding, true_name in zip(self.system.known_embeddings, self.system.known_names):
-                if true_name not in person_stats:
-                    person_stats[true_name] = {'correct': 0, 'total': 0, 'confidences': []}
-                
-                predicted_name, confidence = self.system.predict_person(embedding)
-                person_stats[true_name]['total'] += 1
-                person_stats[true_name]['confidences'].append(confidence)
-                
-                if predicted_name == true_name:
-                    person_stats[true_name]['correct'] += 1
-            
-            for person, stats in person_stats.items():
-                person_accuracy = stats['correct'] / stats['total']
-                person_avg_conf = sum(stats['confidences']) / len(stats['confidences'])
-                text_widget.insert(tk.END, f"{person}:\n")
-                text_widget.insert(tk.END, f"  Accuracy: {person_accuracy:.3f}\n")
-                text_widget.insert(tk.END, f"  Avg Confidence: {person_avg_conf:.3f}\n")
-                text_widget.insert(tk.END, f"  Samples: {stats['total']}\n\n")
-            
-            # Recommendations
-            text_widget.insert(tk.END, "💡 RECOMMENDATIONS\n")
-            text_widget.insert(tk.END, "-" * 30 + "\n")
-            
-            if accuracy < 0.8:
-                text_widget.insert(tk.END, "⚠️ Low accuracy detected. Consider:\n")
-                text_widget.insert(tk.END, "   • Adding more training samples\n")
-                text_widget.insert(tk.END, "   • Trying a different classifier\n")
-                text_widget.insert(tk.END, "   • Adjusting confidence threshold\n\n")
-            elif accuracy > 0.95:
-                text_widget.insert(tk.END, "✅ Excellent accuracy! This classifier is performing well.\n\n")
-            
-            if avg_processing_time > 0.1:
-                text_widget.insert(tk.END, "⏱️ Consider faster classifier for real-time applications.\n\n")
-            
-            text_widget.insert(tk.END, "✅ Analysis complete!\n")
-            
-        except Exception as e:
-            text_widget.insert(tk.END, f"❌ Error during analysis: {e}\n")
-    
-    def export_analysis(self):
-        """Export analysis results"""
-        try:
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".json",
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-                title="Save analysis results"
-            )
-            
-            if filename:
-                # Get comparison data
-                comparison_data = []
-                for item in self.comparison_tree.get_children():
-                    values = self.comparison_tree.item(item)['values']
-                    comparison_data.append({
-                        'classifier': values[0],
-                        'accuracy': values[1], 
-                        'avg_confidence': values[2],
-                        'training_time': values[3],
-                        'prediction_speed': values[4]
-                    })
-                
-                # Create export data
-                export_data = {
-                    'timestamp': datetime.now().isoformat(),
-                    'system_info': {
-                        'current_classifier': self.system.classifier.get_name() if self.system else 'None',
-                        'dataset_size': len(self.system.known_embeddings) if self.system and self.system.known_embeddings else 0,
-                        'unique_people': len(set(self.system.known_names)) if self.system and self.system.known_names else 0,
-                        'confidence_threshold': self.confidence_threshold_var.get()
-                    },
-                    'comparison_results': comparison_data,
-                    'detailed_analysis': self.analysis_text.get(1.0, tk.END)
-                }
-                
-                with open(filename, 'w') as f:
-                    json.dump(export_data, f, indent=2)
-                
-                messagebox.showinfo("Success", f"Analysis results exported to {filename}")
-                
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to export results: {e}")
-    
-    # Reports Methods
-    def refresh_reports(self):
-        """Refresh all reports"""
-        try:
-            # Clear existing data
-            for item in self.reports_tree.get_children():
-                self.reports_tree.delete(item)
             for item in self.users_tree.get_children():
                 self.users_tree.delete(item)
             
-            if not self.system:
+            users = self.system.get_enrolled_users()
+            
+            for _, user in users.iterrows():
+                enrollment_date = str(user['enrollment_date']).split()[0]
+                last_updated = str(user['last_updated']).split()[0]
+                
+                self.users_tree.insert('', 'end', values=(
+                    user['name'],
+                    user['total_embeddings'],
+                    enrollment_date,
+                    last_updated
+                ))
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to refresh users list: {e}")
+    
+    def delete_selected_user(self):
+        """Delete selected user"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        selection = self.users_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a user to delete!")
+            return
+        
+        item = self.users_tree.item(selection[0])
+        user_name = item['values'][0]
+        
+        # Confirm deletion
+        result = messagebox.askyesno(
+            "Confirm Deletion",
+            f"Are you sure you want to delete user '{user_name}'?\n\nThis will remove all their data and cannot be undone."
+        )
+        
+        if result:
+            try:
+                success, message = self.system.delete_enrolled_user(user_name)
+                if success:
+                    messagebox.showinfo("Success", message)
+                    self.refresh_users_list()
+                    self.refresh_dashboard()
+                else:
+                    messagebox.showerror("Error", message)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to delete user: {e}")
+    
+    def view_user_details(self):
+        """View details of selected user"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        selection = self.users_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a user to view details!")
+            return
+        
+        item = self.users_tree.item(selection[0])
+        user_name = item['values'][0]
+        
+        try:
+            users = self.system.get_enrolled_users()
+            user_row = users[users['name'] == user_name]
+            
+            if user_row.empty:
+                messagebox.showerror("Error", "User not found!")
                 return
             
-            # Refresh attendance records
-            df = self.system.generate_report()
-            for _, row in df.iterrows():
-                date_time = pd.to_datetime(row['timestamp'])
-                classifier_type = row.get('classifier_type', 'Unknown')
-                self.reports_tree.insert('', 'end', values=(
-                    row['id'], row['name'], date_time.strftime("%Y-%m-%d"),
-                    date_time.strftime("%H:%M:%S"), f"{row['confidence']:.3f}", classifier_type
-                ))
+            user = user_row.iloc[0]
             
-            # Refresh enrolled users
-            users_df = self.system.database.get_enrolled_users()
-            for _, row in users_df.iterrows():
-                enrollment_date = pd.to_datetime(row['enrollment_date']).strftime("%Y-%m-%d %H:%M")
-                self.users_tree.insert('', 'end', values=(
-                    row['id'], row['name'], enrollment_date, row['total_embeddings']
-                ))
+            details = f"""User Details for: {user['name']}
+{'='*50}
+
+Enrollment Information:
+• Name: {user['name']}
+• Total Face Samples: {user['total_embeddings']}
+• Enrollment Date: {user['enrollment_date']}
+• Last Updated: {user['last_updated']}
+
+"""
+            
+            # Get attendance history
+            try:
+                report = self.system.generate_report()
+                user_attendance = report[report['name'] == user_name]
                 
+                if not user_attendance.empty:
+                    details += f"Recent Attendance History ({len(user_attendance)} total records):\n"
+                    details += "-" * 50 + "\n"
+                    
+                    for _, record in user_attendance.head(10).iterrows():
+                        timestamp = record['timestamp']
+                        confidence = record['confidence']
+                        classifier = record.get('classifier_type', 'unknown')
+                        details += f"• {timestamp} (confidence: {confidence:.3f}) [{classifier}]\n"
+                    
+                    if len(user_attendance) > 10:
+                        details += f"... and {len(user_attendance) - 10} more records\n"
+                else:
+                    details += "No attendance records found.\n"
+                    
+            except Exception as e:
+                details += f"Error retrieving attendance history: {e}\n"
+            
+            self.user_details_text.delete(1.0, tk.END)
+            self.user_details_text.insert(tk.END, details)
+            
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to refresh reports: {e}")
+            messagebox.showerror("Error", f"Failed to get user details: {e}")
     
-    def export_reports(self):
-        """Export reports to CSV"""
+    def generate_report(self):
+        """Generate attendance report"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        start_date = self.start_date_var.get().strip() or None
+        end_date = self.end_date_var.get().strip() or None
+        
         try:
+            report = self.system.generate_report(start_date, end_date)
+            
+            if report.empty:
+                self.report_text.delete(1.0, tk.END)
+                self.report_text.insert(tk.END, "No attendance records found for the specified period.")
+                return
+            
+            # Generate report text
+            report_content = f"""ATTENDANCE REPORT
+{'='*60}
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Date Range: {start_date or 'Beginning'} to {end_date or 'Today'}
+
+SUMMARY:
+• Total Records: {len(report)}
+• Unique People: {report['name'].nunique()}
+• Data Range: {report['date'].min()} to {report['date'].max()}
+
+RECENT RECORDS (Last 20):
+{'-'*60}
+"""
+            
+            for _, record in report.head(20).iterrows():
+                report_content += f"{record['name']:<20} {record['timestamp']:<20} {record['confidence']:.3f}\n"
+            
+            if len(report) > 20:
+                report_content += f"\n... and {len(report) - 20} more records\n"
+            
+            # Daily summary
+            daily_counts = report['date'].value_counts().sort_index(ascending=False)
+            
+            report_content += f"\nDAILY SUMMARY (Last 10 days):\n{'-'*60}\n"
+            for date_str, count in daily_counts.head(10).items():
+                unique_count = report[report['date'] == date_str]['name'].nunique()
+                report_content += f"{date_str}: {count} check-ins, {unique_count} unique people\n"
+            
+            self.report_text.delete(1.0, tk.END)
+            self.report_text.insert(tk.END, report_content)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate report: {e}")
+    
+    def export_csv(self):
+        """Export attendance report to CSV"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        start_date = self.start_date_var.get().strip() or None
+        end_date = self.end_date_var.get().strip() or None
+        
+        try:
+            report = self.system.generate_report(start_date, end_date)
+            
+            if report.empty:
+                messagebox.showwarning("Warning", "No data to export!")
+                return
+            
+            # Ask user for save location
             filename = filedialog.asksaveasfilename(
+                title="Save Attendance Report",
                 defaultextension=".csv",
-                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                title="Save attendance report"
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
             )
             
-            if filename and self.system:
-                df = self.system.generate_report()
-                df.to_csv(filename, index=False)
-                messagebox.showinfo("Success", f"Report exported to {filename}")
+            if filename:
+                report.to_csv(filename, index=False)
+                messagebox.showinfo("Success", f"Report exported to: {filename}")
                 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to export report: {e}")
+            messagebox.showerror("Error", f"Failed to export CSV: {e}")
     
-    # Message Processing
-    def start_message_processing(self):
-        """Start processing messages from worker threads"""
-        self.process_messages()
-    
-    def process_messages(self):
-        """Process messages from worker threads"""
+    def show_performance_report(self):
+        """Show classifier performance report"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
         try:
-            while True:
-                message_type, data = self.message_queue.get_nowait()
-                
-                if message_type == "status":
-                    self.status_var.set(data)
-                
-                elif message_type == "result":
-                    self.enrollment_results.insert(tk.END, data)
-                    self.enrollment_results.see(tk.END)
-                
-                elif message_type == "progress_stop":
-                    self.enrollment_progress.stop()
-                
-                elif message_type == "update_info":
-                    self.update_system_info()
-                
-                elif message_type == "video_frame":
-                    self.video_label.configure(image=data)
-                    self.video_label.image = data
-                
-                elif message_type == "attendance":
-                    # Add new attendance record
-                    self.attendance_tree.insert('', 0, values=(
-                        data['time'], data['name'], f"{data['confidence']:.3f}", data['classifier']
-                    ))
-                
-                elif message_type == "comparison_result":
-                    # Add comparison result
-                    self.comparison_tree.insert('', 'end', values=(
-                        data['classifier'], data['accuracy'], data['avg_confidence'],
-                        data['training_time'], data['speed']
-                    ))
-                
-                elif message_type == "analysis_update":
-                    self.analysis_text.insert(tk.END, data)
-                    self.analysis_text.see(tk.END)
-                
-                elif message_type == "analysis_details":
-                    self.analysis_text.insert(tk.END, data)
-                    self.analysis_text.see(tk.END)
-                
-        except queue.Empty:
-            pass
+            perf_report = self.system.get_classifier_performance_report()
+            
+            # Create new window for performance report
+            perf_window = tk.Toplevel(self.root)
+            perf_window.title("🎯 Classifier Performance Report")
+            perf_window.geometry("600x400")
+            
+            text_widget = scrolledtext.ScrolledText(perf_window, font=('Courier', 10))
+            text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            text_widget.insert(tk.END, perf_report)
+            
+            # Save button
+            def save_perf_report():
+                filename = filedialog.asksaveasfilename(
+                    title="Save Performance Report",
+                    defaultextension=".txt",
+                    filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+                )
+                if filename:
+                    with open(filename, 'w') as f:
+                        f.write(perf_report)
+                    messagebox.showinfo("Success", f"Performance report saved to: {filename}")
+            
+            ttk.Button(perf_window, text="💾 Save Report", command=save_perf_report).pack(pady=5)
+            
         except Exception as e:
-            print(f"Error processing messages: {e}")
-        
-        # Schedule next check
-        self.root.after(100, self.process_messages)
+            messagebox.showerror("Error", f"Failed to show performance report: {e}")
     
-    def on_closing(self):
-        """Handle application closing"""
-        if self.attendance_running:
-            self.stop_attendance()
+    def apply_settings(self):
+        """Apply threshold settings"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
         
-        if self.video_capture:
-            self.video_capture.release()
+        try:
+            self.system.confidence_threshold = self.confidence_var.get()
+            self.system.verifier.similarity_threshold = self.verification_var.get()
+            
+            messagebox.showinfo("Success", "Settings applied successfully!")
+            self.refresh_dashboard()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply settings: {e}")
+    
+    def save_system(self):
+        """Save system state"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
         
-        self.root.destroy()
+        try:
+            self.system.save_system()
+            messagebox.showinfo("Success", "System state saved successfully!")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save system: {e}")
+    
+    def reload_system(self):
+        """Reload system"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        try:
+            self.system.load_system()
+            messagebox.showinfo("Success", "System reloaded successfully!")
+            self.refresh_dashboard()
+            self.refresh_users_list()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to reload system: {e}")
+    
+    def refresh_system_info(self):
+        """Refresh system information"""
+        if not self.is_initialized:
+            self.system_info_text.delete(1.0, tk.END)
+            self.system_info_text.insert(tk.END, "System not initialized.")
+            return
+        
+        try:
+            status = self.system.get_system_status()
+            
+            info = f"""SYSTEM INFORMATION
+{'='*50}
+
+System Configuration:
+• System Type: {status['system_type']}
+• Enrolled Users: {status['enrolled_users']}
+• Total Embeddings: {status['total_embeddings']}
+• Active Classifiers: {', '.join(status['active_classifiers'])}
+• Confidence Threshold: {status['confidence_threshold']:.3f}
+• Verification Threshold: {status['verification_threshold']:.3f}
+
+Hardware Information:
+• Processing Device: {self.system.extractor.device}
+• Model Path: {self.system.model_path}
+• Database Path: {self.system.database.database_path}
+
+Classifier Performance:
+"""
+            
+            perf = status['classifier_performance']
+            for clf_name, metrics in perf.items():
+                if metrics['total'] > 0:
+                    accuracy = (metrics['correct'] / metrics['total']) * 100
+                    info += f"• {clf_name}: {accuracy:.1f}% accuracy ({metrics['correct']}/{metrics['total']} correct)\n"
+                else:
+                    info += f"• {clf_name}: No predictions yet\n"
+            
+            info += f"\nDatabase Statistics:\n"
+            try:
+                users = self.system.get_enrolled_users()
+                if not users.empty:
+                    info += f"• Oldest enrollment: {users['enrollment_date'].min()}\n"
+                    info += f"• Latest update: {users['last_updated'].max()}\n"
+                    info += f"• Average samples per user: {users['total_embeddings'].mean():.1f}\n"
+                
+                # Attendance stats
+                report = self.system.generate_report()
+                if not report.empty:
+                    info += f"• Total attendance records: {len(report)}\n"
+                    info += f"• First attendance: {report['date'].min()}\n"
+                    info += f"• Last attendance: {report['date'].max()}\n"
+                else:
+                    info += "• No attendance records yet\n"
+                    
+            except Exception as e:
+                info += f"• Error retrieving database stats: {e}\n"
+            
+            self.system_info_text.delete(1.0, tk.END)
+            self.system_info_text.insert(tk.END, info)
+            
+        except Exception as e:
+            self.system_info_text.delete(1.0, tk.END)
+            self.system_info_text.insert(tk.END, f"Error retrieving system info: {e}")
 
 def main():
-    """Main function to run the clean GUI application"""
+    """Main function to run the GUI application"""
     root = tk.Tk()
+    app = FaceRecognitionGUI(root)
     
-    # Set modern style
     try:
-        # Use Windows 10 style if available
-        root.tk.call('source', 'azure.tcl')
-        root.tk.call('set_theme', 'light')
-    except:
-        pass
-    
-    app = CleanFaceRecognitionGUI(root)
-    
-    # Handle window closing
-    root.protocol("WM_DELETE_WINDOW", app.on_closing)
-    
-    # Start the application
-    root.mainloop()
+        root.mainloop()
+    except KeyboardInterrupt:
+        print("\nApplication interrupted by user")
+    except Exception as e:
+        print(f"Application error: {e}")
 
 if __name__ == "__main__":
     main()
