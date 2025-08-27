@@ -488,7 +488,8 @@ Camera Controls (when live window is active):
             return
         
         name = self.folder_name_var.get().strip()
-        folder_path = self.folder_path_var.get().strip()
+        folder_path = self.files_path_var.get().strip()
+        
         
         if not name:
             messagebox.showerror("Error", "Please enter a user name!")
@@ -525,7 +526,7 @@ Camera Controls (when live window is active):
         self.log_to_enrollment("📊 All classifiers retrained with new user data")
         self.webcam_name_var.set("")
         self.folder_name_var.set("")
-        self.folder_path_var.set("")
+        self.files_path_var.set("")
         self.refresh_dashboard()
         self.refresh_users_list()
         messagebox.showinfo("Success", f"Successfully enrolled {name}!")
@@ -556,7 +557,7 @@ Camera Controls (when live window is active):
         """Browse for image folder"""
         folder_path = filedialog.askdirectory(title="Select Images Folder")
         if folder_path:
-            self.folder_path_var.set(folder_path)
+            self.files_path_var.set(folder_path)
 
     def browse_files(self):
         file_paths = filedialog.askopenfilenames(
@@ -605,7 +606,8 @@ Camera Controls (when live window is active):
                 self.root.after(0, self.on_attendance_stopped)
                 
             except Exception as e:
-                self.root.after(0, lambda: self.on_attendance_error(str(e)))
+                error_msg = str(e)
+                self.root.after(0, lambda: self.on_attendance_error(error_msg))
         
         thread = threading.Thread(target=attendance_worker, daemon=True)
         thread.start()
@@ -631,8 +633,16 @@ Camera Controls (when live window is active):
         self.start_attendance_btn.config(state=tk.NORMAL)
         self.stop_attendance_btn.config(state=tk.DISABLED)
         self.attendance_status_var.set("❌ Attendance error")
-        self.log_to_attendance(f"❌ Attendance error: {error}")
-        messagebox.showerror("Attendance Error", f"Attendance error: {error}")
+        
+        # Provide more specific error messages for common issues
+        error_msg = str(error)
+        if "torch.cat" in error_msg and "non-empty list" in error_msg:
+            user_friendly_msg = "Camera/face detection error: No faces detected or invalid image. Please ensure:\n• Camera is working properly\n• Adequate lighting\n• Face is clearly visible\n• Try restarting the camera"
+            self.log_to_attendance(f"❌ Face detection error: {user_friendly_msg}")
+            messagebox.showerror("Camera Error", user_friendly_msg)
+        else:
+            self.log_to_attendance(f"❌ Attendance error: {error_msg}")
+            messagebox.showerror("Attendance Error", f"Attendance error: {error_msg}")
     
     def refresh_users_list(self):
         """Refresh the users list"""

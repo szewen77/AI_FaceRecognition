@@ -76,20 +76,28 @@ class FaceEmbeddingExtractor:
         Returns:
             embedding: 512-dimensional face embedding or None
         """
-        # Convert BGR to RGB
-        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # Detect and extract face
-        face_tensor = self.mtcnn(rgb_image)
-        
-        if face_tensor is not None:
-            # Generate embedding
-            with torch.no_grad():
-                face_tensor = face_tensor.unsqueeze(0).to(self.device)
-                embedding = self.facenet(face_tensor).cpu().numpy().flatten()
-            return embedding
-        
-        return None
+        try:
+            # Convert BGR to RGB
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # Validate image
+            if rgb_image is None or rgb_image.size == 0:
+                return None
+            
+            # Detect and extract face
+            face_tensor = self.mtcnn(rgb_image)
+            
+            if face_tensor is not None:
+                # Generate embedding
+                with torch.no_grad():
+                    face_tensor = face_tensor.unsqueeze(0).to(self.device)
+                    embedding = self.facenet(face_tensor).cpu().numpy().flatten()
+                return embedding
+            
+            return None
+        except Exception as e:
+            print(f"Error in extract_face_embedding: {str(e)}")
+            return None
     
     def detect_faces(self, image):
         """
@@ -101,9 +109,22 @@ class FaceEmbeddingExtractor:
         Returns:
             boxes: List of face bounding boxes or None
         """
-        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        boxes, _ = self.mtcnn.detect(rgb_image)
-        return boxes
+        try:
+            # Validate image
+            if image is None or image.size == 0:
+                return None
+                
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # Validate converted image
+            if rgb_image is None or rgb_image.size == 0:
+                return None
+                
+            boxes, _ = self.mtcnn.detect(rgb_image)
+            return boxes
+        except Exception as e:
+            print(f"Error in detect_faces: {str(e)}")
+            return None
 
 class FaceVerifier:
     """Handles face verification for enrollment validation"""
@@ -960,9 +981,14 @@ class FixedMultiClassifierSystem:
                     x1, y1, x2, y2 = map(int, box)
                 
                     # Extract face for recognition
+                    # Validate bounding box coordinates
+                    if x1 >= x2 or y1 >= y2:
+                        continue  # Skip invalid bounding box
+                        
                     face_crop = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
                 
-                    if face_crop.size > 0:
+                    # Validate face crop dimensions
+                    if face_crop.size > 0 and face_crop.shape[0] > 20 and face_crop.shape[1] > 20:
                         # Get embedding
                         embedding = self.extractor.extract_face_embedding(face_crop)
                     
