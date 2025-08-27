@@ -865,6 +865,9 @@ class FixedMultiClassifierSystem:
     def load_system(self):
         """Load all classifiers and system state"""
         system_path = self.model_path / 'multi_classifier_system_data.pkl'
+
+        print("🔄 Rebuilding training data from database...")
+        self._rebuild_embeddings_from_database()
         
         if system_path.exists():
             try:
@@ -872,16 +875,16 @@ class FixedMultiClassifierSystem:
                 with open(system_path, 'rb') as f:
                     system_data = pickle.load(f)
                 
-                self.known_embeddings = system_data.get('known_embeddings', [])
-                self.known_names = system_data.get('known_names', [])
+                # self.known_embeddings = system_data.get('known_embeddings', [])
+                # self.known_names = system_data.get('known_names', [])
                 self.classifier_performance = system_data.get('classifier_performance', {
                     'SVM': {'correct': 0, 'total': 0, 'predictions': []},
                     'KNN': {'correct': 0, 'total': 0, 'predictions': []},
                     'LogisticRegression': {'correct': 0, 'total': 0, 'predictions': []}
                 })
                 
-                # Rebuild embeddings from database (more reliable than saved data)
-                self._rebuild_embeddings_from_database()
+                # # Rebuild embeddings from database (more reliable than saved data)
+                # self._rebuild_embeddings_from_database()
                 
                 # Load each classifier
                 load_results = {}
@@ -918,24 +921,24 @@ class FixedMultiClassifierSystem:
         print(f"📊 Active classifiers: {list(self.classifiers.keys())}")
         print(f"🗳️  Using majority voting for final decisions")
         print("Controls: 'q'=quit, 's'=screenshot, 'p'=performance report, 'd'=debug mode")
-        
+    
         cap = cv2.VideoCapture(0)
         frame_count = 0
         detected_count = 0
         recognized_count = 0
         debug_mode = False
-        
+    
         # Check if system is ready
         if len(self.known_embeddings) == 0:
             print("⚠️  No enrolled users found! Please enroll users first.")
             cap.release()
             return
-        
+    
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            
+        
             # Process every 10th frame for performance
             frame_count += 1
             if frame_count % 10 != 0:
@@ -943,81 +946,84 @@ class FixedMultiClassifierSystem:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
                 continue
-            
+        
             # Create display frame
             display_frame = frame.copy()
-            
+        
             # Detect faces
             boxes = self.extractor.detect_faces(frame)
-            
+        
             if boxes is not None:
                 detected_count += len(boxes)
-                
+            
                 for box in boxes:
                     x1, y1, x2, y2 = map(int, box)
-                    
+                
                     # Extract face for recognition
-                    face_crop = frame[max(0, y1):min(frame.shape[0], y2), 
-                                    max(0, x1):min(frame.shape[1], x2)]
-                    
+                    face_crop = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
+                
                     if face_crop.size > 0:
                         # Get embedding
                         embedding = self.extractor.extract_face_embedding(face_crop)
-                        
+                    
                         if embedding is not None:
                             # Multi-classifier prediction with voting
-                            predicted_name, confidence, individual_results, voting_details = self.predict_with_voting(
-                                embedding, debug=debug_mode
-                            )
-                            
-                            if predicted_name != "Unknown":
-                                color = (0, 255, 0)  # Green
+                            predicted_name, confidence, individual_results, voting_details = self.predict_with_voting(embedding, debug=debug_mode)
+                        
+                            attendance_marked = False
+                        
+                            if predicted_name != "Unknown" and confidence >= self.confidence_threshold:
+                                # Only show name if both recognized AND confident enough
+                                color = (0, 255, 0)  # Green - confident recognition
                                 recognized_count += 1
-                                
-                                if confidence >= self.confidence_threshold:
-                                    message, marked = self.mark_attendance_with_tracking(
-                                        predicted_name, confidence, individual_results, voting_details
-                                    )
+                                message, attendance_marked = self.mark_attendance_with_tracking(predicted_name, confidence, individual_results, voting_details)
+                                display_name = predicted_name
+                                display_confidence = confidence
                             else:
-                                color = (0, 0, 255)  # Red
-                            
+                                # Low confidence or no recognition = treat as Unknown
+                                color = (0, 0, 255)  # Red - unknown
+                                display_name = "Unknown"
+                                display_confidence = 0.0
+                        
                             # Draw rectangle and label
                             cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-                            label = f"{predicted_name} ({confidence:.2f})"
+                            label = f"{display_name} ({display_confidence:.2f})"
                             cv2.putText(display_frame, label, (x1, y1-10), 
-                                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                            
-                            # Show voting details on frame
-                            if predicted_name != "Unknown":
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                        
+                            # Show voting details only for recognized faces
+                            if predicted_name != "Unknown" and confidence >= self.confidence_threshold:
                                 vote_text = f"Votes: {voting_details['votes'].get(predicted_name, 0)}/3"
-                                cv2.putText(display_frame, vote_text, (x1, y2+20), 
-                                          cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-                                
-                                # Show individual classifier predictions if debug mode
-                                if debug_mode:
-                                    y_offset = y2 + 40
-                                    for clf_name, result in individual_results.items():
-                                        detail_text = f"{clf_name}: {result['name']}({result['confidence']:.2f})"
-                                        cv2.putText(display_frame, detail_text, (x1, y_offset), 
-                                                  cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                                        y_offset += 15
-            
+                                cv2.putText(display_frame, vote_text, (x1, y2+20),cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                            
+                                if attendance_marked:
+                                    status_text = "✓ MARKED"
+                                    cv2.putText(display_frame, status_text, (x1, y2+40),cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+                        
+                            # Debug mode shows actual predictions even when displayed as Unknown
+                            if debug_mode and (predicted_name != "Unknown" or confidence > 0):
+                                y_offset = y2 + 60
+                                if predicted_name != "Unknown":
+                                    cv2.putText(display_frame, f"ACTUAL: {predicted_name} ({confidence:.2f})", (x1, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 0), 1)
+                                    y_offset += 15
+                            
+                                for clf_name, result in individual_results.items():
+                                    detail_text = f"{clf_name}: {result['name']}({result['confidence']:.2f})"
+                                    cv2.putText(display_frame, detail_text, (x1, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                                    y_offset += 15
+        
             # Add system info
             unique_people = len(set(self.known_names)) if self.known_names else 0
-            cv2.putText(display_frame, f"Multi-Classifier System | {unique_people} enrolled", 
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(display_frame, f"Detected: {detected_count} | Recognized: {recognized_count}", 
-                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(display_frame, f"Frame: {frame_count} | Majority Voting Active", 
-                       (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-            
+            cv2.putText(display_frame, f"Multi-Classifier System | {unique_people} enrolled",(10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(display_frame, f"Detected: {detected_count} | Recognized: {recognized_count}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(display_frame, f"Frame: {frame_count} | Threshold: {self.confidence_threshold:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        
             if debug_mode:
-                cv2.putText(display_frame, "DEBUG MODE ON", 
-                           (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-            
+                cv2.putText(display_frame, "DEBUG MODE ON - Shows actual predictions", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        
             # Display frame
             cv2.imshow('Multi-Classifier Attendance', display_frame)
-            
+        
             # Handle key presses
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
@@ -1034,11 +1040,9 @@ class FixedMultiClassifierSystem:
                 # Toggle debug mode
                 debug_mode = not debug_mode
                 print(f"🔍 Debug mode: {'ON' if debug_mode else 'OFF'}")
-        
+    
         cap.release()
         cv2.destroyAllWindows()
-        
-        # Final statistics
         print(f"\n📊 SESSION STATISTICS:")
         print(f"Frames processed: {frame_count}")
         print(f"Faces detected: {detected_count}")
@@ -1046,6 +1050,8 @@ class FixedMultiClassifierSystem:
         if detected_count > 0:
             print(f"Recognition rate: {(recognized_count/detected_count)*100:.1f}%")
     
+        
+            
     def generate_report(self, start_date=None, end_date=None):
         """Generate attendance report"""
         return self.database.get_attendance_report(start_date, end_date)
