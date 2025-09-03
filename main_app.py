@@ -569,11 +569,41 @@ Camera Controls (when live window is active):
             self.selected_files = list(file_paths)
 
     def start_file_enrollment(self):
+        """Start enrollment from selected image files"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
         if not hasattr(self, "selected_files") or not self.selected_files:
             messagebox.showerror("Error", "Please select image files first!")
             return
-        # process images in self.selected_files...
-        messagebox.showinfo("Enrollment", f"Enrolled {len(self.selected_files)} images")
+        
+        # Get user name from the folder enrollment field (reusing the same field)
+        name = self.folder_name_var.get().strip()
+        if not name:
+            messagebox.showerror("Error", "Please enter a user name!")
+            return
+        
+        def enrollment_worker():
+            try:
+                self.log_to_enrollment(f"🔄 Starting file enrollment for '{name}'...")
+                self.log_to_enrollment(f"📁 Processing {len(self.selected_files)} selected image(s)...")
+                
+                success = self.system.enroll_person(
+                    name=name,
+                    file_list=self.selected_files
+                )
+                
+                if success:
+                    self.root.after(0, lambda: self.on_enrollment_success(name))
+                else:
+                    self.root.after(0, lambda: self.on_enrollment_failed(name))
+                    
+            except Exception as e:
+                self.root.after(0, lambda: self.on_enrollment_error(name, str(e)))
+        
+        thread = threading.Thread(target=enrollment_worker, daemon=True)
+        thread.start()
 
     
     def start_live_attendance(self):

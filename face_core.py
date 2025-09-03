@@ -549,6 +549,65 @@ class FaceEnrollmentSystem:
         total_samples = len(existing_embeddings) + len(embeddings) if user_exists else len(embeddings)
         print(f"Successfully enrolled {name} with {total_samples} total samples")
         return embeddings
+    
+    def enroll_from_file_list(self, name, file_paths):
+        """Enroll person from a list of image files with verification for existing users"""
+        embeddings = []
+        
+        # Check if user already exists
+        user_exists = self.database.user_exists(name)
+        if user_exists:
+            print(f"User '{name}' already exists. Adding new samples for enhancement...")
+            existing_embeddings = self.database.get_user_embeddings(name)
+        else:
+            print(f"Enrolling new user: {name}")
+            existing_embeddings = []
+        
+        print(f"Processing {len(file_paths)} selected image file(s)...")
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
+        
+        for file_path in file_paths:
+            file_path = Path(file_path)
+            if file_path.suffix.lower() in image_extensions:
+                try:
+                    image = cv2.imread(str(file_path))
+                    if image is not None:
+                        embedding = self.extractor.extract_face_embedding(image)
+                        if embedding is not None:
+                            embeddings.append(embedding)
+                            print(f"Processed: {file_path.name}")
+                        else:
+                            print(f"No face found in: {file_path.name}")
+                    else:
+                        print(f"Could not load image: {file_path.name}")
+                except Exception as e:
+                    print(f"Error processing {file_path.name}: {e}")
+            else:
+                print(f"Skipped unsupported file: {file_path.name}")
+        
+        if len(embeddings) == 0:
+            print(f"No valid face embeddings found for {name}")
+            return []
+        
+        # Verify if adding to existing user
+        if user_exists and existing_embeddings:
+            is_same_person, similarity = self.verifier.verify_same_person(embeddings, existing_embeddings)
+            
+            if not is_same_person:
+                print(f"ERROR: New images do not match existing user '{name}'!")
+                print(f"Similarity score: {similarity:.3f} (threshold: {self.verifier.similarity_threshold})")
+                print("Enrollment rejected. Original data retained.")
+                return []
+            else:
+                print(f"✓ Verification passed! Similarity: {similarity:.3f}")
+                print(f"Adding {len(embeddings)} new samples to existing user '{name}'")
+        
+        # Update database
+        self.database.add_enrolled_user(name, embeddings)
+        
+        total_samples = len(existing_embeddings) + len(embeddings) if user_exists else len(embeddings)
+        print(f"Successfully enrolled {name} with {total_samples} total samples")
+        return embeddings
 
 class FixedMultiClassifierSystem:
     """Multi-Classifier System with simultaneous training and majority voting"""
@@ -609,7 +668,7 @@ class FixedMultiClassifierSystem:
         print("🔄 Loading existing system data...")
         self.load_system()
     
-    def enroll_person(self, name, images_path=None, webcam_capture=False, num_samples=10):
+    def enroll_person(self, name, images_path=None, webcam_capture=False, num_samples=10, file_list=None):
         """Enroll person with simultaneous multi-classifier training"""
         print(f"\n=== ENROLLING: {name} ===")
         
@@ -618,8 +677,10 @@ class FixedMultiClassifierSystem:
             new_embeddings = self.enrollment_system.enroll_from_webcam(name, num_samples)
         elif images_path:
             new_embeddings = self.enrollment_system.enroll_from_images(name, images_path)
+        elif file_list:
+            new_embeddings = self.enrollment_system.enroll_from_file_list(name, file_list)
         else:
-            print("Please specify either images_path or set webcam_capture=True")
+            print("Please specify either images_path, file_list or set webcam_capture=True")
             return False
         
         if len(new_embeddings) == 0:
