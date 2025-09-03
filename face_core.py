@@ -9,8 +9,30 @@ import torch
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from abc import ABC, abstractmethod
 import pickle
+import time
 from sklearn.metrics.pairwise import cosine_similarity
+# Optional imports for visualization
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    
+try:
+    import seaborn as sns
+    SEABORN_AVAILABLE = True
+except ImportError:
+    SEABORN_AVAILABLE = False
+from sklearn.metrics import (
+    classification_report, accuracy_score, precision_recall_fscore_support,
+    confusion_matrix, roc_curve, auc, precision_score, recall_score, f1_score
+)
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.preprocessing import label_binarize
+from sklearn.multiclass import OneVsRestClassifier
 from typing import List, Dict, Tuple, Optional
+import warnings
+warnings.filterwarnings('ignore')
 
 class BaseClassifier(ABC):
     """Abstract base class for face classifiers"""
@@ -868,6 +890,360 @@ class FixedMultiClassifierSystem:
                 report += f"{clf_name}: No predictions yet\n\n"
         
         return report
+    
+    def comprehensive_classifier_evaluation(self, test_size=0.3, cv_folds=5, save_plots=True):
+        """
+        Comprehensive evaluation of all classifiers with multiple metrics
+        """
+        if len(self.known_embeddings) < 10:
+            return {"error": "Need at least 10 samples for comprehensive evaluation"}
+        
+        print("🔄 Starting comprehensive classifier evaluation...")
+        results = {}
+        
+        # Prepare data
+        X = np.array(self.known_embeddings)
+        y = np.array(self.known_names)
+        
+        # Get unique classes
+        unique_classes = np.unique(y)
+        n_classes = len(unique_classes)
+        
+        if n_classes < 2:
+            return {"error": "Need at least 2 classes for evaluation"}
+        
+        from sklearn.model_selection import train_test_split
+        from sklearn.preprocessing import LabelEncoder
+        
+        # Encode labels
+        le = LabelEncoder()
+        y_encoded = le.fit_transform(y)
+        
+        # Split data with handling for small classes
+        try:
+            # Check if we can use stratified split
+            unique, counts = np.unique(y_encoded, return_counts=True)
+            min_samples_per_class = min(counts)
+            
+            if min_samples_per_class >= 2:
+                # Use stratified split
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y_encoded, test_size=test_size, random_state=42, stratify=y_encoded
+                )
+            else:
+                # Some classes have only 1 sample, use regular split
+                print("⚠️  Some classes have only 1 sample. Using regular (non-stratified) split.")
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y_encoded, test_size=test_size, random_state=42
+                )
+        except ValueError as e:
+            print(f"⚠️  Stratified split failed: {e}. Using regular split.")
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y_encoded, test_size=test_size, random_state=42
+            )
+        
+        print(f"📊 Training set: {len(X_train)} samples")
+        print(f"📊 Test set: {len(X_test)} samples")
+        print(f"📊 Classes: {n_classes} ({unique_classes})")
+        
+        # Evaluate each classifier
+        for clf_name, clf in self.classifiers.items():
+            print(f"\n🔄 Evaluating {clf_name}...")
+            
+            # Train classifier
+            start_time = time.time()
+            clf.train(X_train, le.inverse_transform(y_train))
+            training_time = time.time() - start_time
+            
+            # Make predictions
+            start_time = time.time()
+            y_pred_encoded = []
+            y_pred_proba = []
+            
+            for sample in X_test:
+                try:
+                    pred_result = clf.predict([sample])
+                    if isinstance(pred_result[0], tuple):
+                        pred_name, confidence = pred_result[0]
+                    else:
+                        pred_name = pred_result[0]
+                        confidence = 1.0
+                    
+                    # Encode prediction
+                    try:
+                        pred_encoded = le.transform([pred_name])[0]
+                    except ValueError:
+                        # Unknown class, assign to most frequent class
+                        pred_encoded = np.bincount(y_train).argmax()
+                    
+                    y_pred_encoded.append(pred_encoded)
+                    y_pred_proba.append(confidence)
+                except:
+                    # If prediction fails, assign to most frequent class
+                    y_pred_encoded.append(np.bincount(y_train).argmax())
+                    y_pred_proba.append(0.0)
+            
+            inference_time = time.time() - start_time
+            
+            y_pred_encoded = np.array(y_pred_encoded)
+            
+            # Calculate metrics
+            accuracy = accuracy_score(y_test, y_pred_encoded)
+            precision = precision_score(y_test, y_pred_encoded, average='weighted', zero_division=0)
+            recall = recall_score(y_test, y_pred_encoded, average='weighted', zero_division=0)
+            f1 = f1_score(y_test, y_pred_encoded, average='weighted', zero_division=0)
+            
+            # Confusion matrix
+            cm = confusion_matrix(y_test, y_pred_encoded)
+            
+            # Cross-validation with proper handling of small datasets
+            try:
+                # Check minimum samples per class
+                unique, counts = np.unique(y_encoded, return_counts=True)
+                min_samples_per_class = min(counts)
+                
+                if min_samples_per_class >= 2:
+                    # Use stratified k-fold with adjusted CV folds
+                    effective_cv_folds = min(cv_folds, min_samples_per_class, len(X)//3)
+                    if effective_cv_folds >= 2:
+                        cv_scores = cross_val_score(
+                            clf, X, y_encoded, cv=effective_cv_folds, 
+                            scoring='accuracy'
+                        )
+                        cv_mean = cv_scores.mean()
+                        cv_std = cv_scores.std()
+                    else:
+                        # Not enough data for proper CV
+                        cv_mean = accuracy
+                        cv_std = 0.0
+                else:
+                    # Some classes have only 1 sample, can't do stratified CV
+                    cv_mean = accuracy
+                    cv_std = 0.0
+            except Exception as cv_error:
+                print(f"⚠️  Cross-validation failed: {cv_error}")
+                cv_mean = accuracy
+                cv_std = 0.0
+            
+            # Per-class metrics
+            precision_per_class = precision_score(y_test, y_pred_encoded, average=None, zero_division=0)
+            recall_per_class = recall_score(y_test, y_pred_encoded, average=None, zero_division=0)
+            f1_per_class = f1_score(y_test, y_pred_encoded, average=None, zero_division=0)
+            
+            # Store results
+            results[clf_name] = {
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1,
+                'confusion_matrix': cm,
+                'cv_accuracy_mean': cv_mean,
+                'cv_accuracy_std': cv_std,
+                'training_time': training_time,
+                'inference_time': inference_time,
+                'inference_speed': len(X_test) / inference_time,  # samples per second
+                'precision_per_class': precision_per_class,
+                'recall_per_class': recall_per_class,
+                'f1_per_class': f1_per_class,
+                'class_names': le.classes_,
+                'y_test': y_test,
+                'y_pred': y_pred_encoded,
+                'y_pred_proba': y_pred_proba
+            }
+            
+            print(f"  ✅ Accuracy: {accuracy:.3f}")
+            print(f"  ✅ Precision: {precision:.3f}")
+            print(f"  ✅ Recall: {recall:.3f}")
+            print(f"  ✅ F1-Score: {f1:.3f}")
+            print(f"  ⏱️ Training time: {training_time:.3f}s")
+            print(f"  ⚡ Inference speed: {len(X_test) / inference_time:.1f} samples/sec")
+        
+        # Generate comparison report
+        comparison_report = self._generate_comparison_report(results)
+        results['comparison_report'] = comparison_report
+        
+        # Save visualizations
+        if save_plots:
+            self._save_evaluation_plots(results, unique_classes)
+        
+        print("\n✅ Comprehensive evaluation completed!")
+        return results
+    
+    def _generate_comparison_report(self, results):
+        """Generate a detailed comparison report"""
+        report = "=" * 80 + "\n"
+        report += "                    COMPREHENSIVE CLASSIFIER COMPARISON\n"
+        report += "=" * 80 + "\n\n"
+        
+        # Performance metrics table
+        report += "📊 PERFORMANCE METRICS COMPARISON:\n"
+        report += "-" * 80 + "\n"
+        report += f"{'Classifier':<20} {'Accuracy':<10} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}\n"
+        report += "-" * 80 + "\n"
+        
+        for clf_name, metrics in results.items():
+            if clf_name == 'comparison_report':
+                continue
+            report += f"{clf_name:<20} {metrics['accuracy']:<10.3f} {metrics['precision']:<10.3f} "
+            report += f"{metrics['recall']:<10.3f} {metrics['f1_score']:<10.3f}\n"
+        
+        # Cross-validation results
+        report += "\n📈 CROSS-VALIDATION RESULTS:\n"
+        report += "-" * 60 + "\n"
+        report += f"{'Classifier':<20} {'CV Accuracy':<15} {'Std Dev':<10}\n"
+        report += "-" * 60 + "\n"
+        
+        for clf_name, metrics in results.items():
+            if clf_name == 'comparison_report':
+                continue
+            report += f"{clf_name:<20} {metrics['cv_accuracy_mean']:<15.3f} {metrics['cv_accuracy_std']:<10.3f}\n"
+        
+        # Computational efficiency
+        report += "\n⚡ COMPUTATIONAL EFFICIENCY:\n"
+        report += "-" * 70 + "\n"
+        report += f"{'Classifier':<20} {'Training(s)':<12} {'Inference(s)':<12} {'Speed(sps)':<12}\n"
+        report += "-" * 70 + "\n"
+        
+        for clf_name, metrics in results.items():
+            if clf_name == 'comparison_report':
+                continue
+            report += f"{clf_name:<20} {metrics['training_time']:<12.3f} "
+            report += f"{metrics['inference_time']:<12.3f} {metrics['inference_speed']:<12.1f}\n"
+        
+        # Best performer in each category
+        report += "\n🏆 BEST PERFORMERS:\n"
+        report += "-" * 40 + "\n"
+        
+        # Find best in each metric
+        best_accuracy = max(results.items(), key=lambda x: x[1]['accuracy'] if x[0] != 'comparison_report' else 0)
+        best_precision = max(results.items(), key=lambda x: x[1]['precision'] if x[0] != 'comparison_report' else 0)
+        best_recall = max(results.items(), key=lambda x: x[1]['recall'] if x[0] != 'comparison_report' else 0)
+        best_f1 = max(results.items(), key=lambda x: x[1]['f1_score'] if x[0] != 'comparison_report' else 0)
+        best_speed = max(results.items(), key=lambda x: x[1]['inference_speed'] if x[0] != 'comparison_report' else 0)
+        
+        report += f"🎯 Best Accuracy:   {best_accuracy[0]} ({best_accuracy[1]['accuracy']:.3f})\n"
+        report += f"🎯 Best Precision:  {best_precision[0]} ({best_precision[1]['precision']:.3f})\n"
+        report += f"🎯 Best Recall:     {best_recall[0]} ({best_recall[1]['recall']:.3f})\n"
+        report += f"🎯 Best F1-Score:   {best_f1[0]} ({best_f1[1]['f1_score']:.3f})\n"
+        report += f"⚡ Fastest:         {best_speed[0]} ({best_speed[1]['inference_speed']:.1f} sps)\n"
+        
+        # Recommendations
+        report += "\n💡 RECOMMENDATIONS:\n"
+        report += "-" * 50 + "\n"
+        
+        if best_accuracy[1]['accuracy'] > 0.9:
+            report += f"✅ For maximum accuracy: Use {best_accuracy[0]}\n"
+        
+        if best_speed[1]['inference_speed'] > 100:
+            report += f"⚡ For real-time applications: Use {best_speed[0]}\n"
+        
+        if best_f1[1]['f1_score'] > 0.85:
+            report += f"⚖️  For balanced performance: Use {best_f1[0]}\n"
+        
+        report += "\n" + "=" * 80 + "\n"
+        
+        return report
+    
+    def _save_evaluation_plots(self, results, class_names):
+        """Save evaluation plots including confusion matrices and performance charts"""
+        if not MATPLOTLIB_AVAILABLE:
+            print("⚠️  Matplotlib not available. Skipping plot generation.")
+            return
+            
+        try:
+            
+            # Set up the plotting style
+            plt.style.use('default')
+            if SEABORN_AVAILABLE:
+                sns.set_palette("husl")
+            
+            # Create a figure with subplots
+            fig = plt.figure(figsize=(20, 15))
+            
+            # 1. Performance metrics comparison
+            plt.subplot(2, 3, 1)
+            metrics_data = []
+            clf_names = []
+            
+            for clf_name, metrics in results.items():
+                if clf_name == 'comparison_report':
+                    continue
+                clf_names.append(clf_name)
+                metrics_data.append([
+                    metrics['accuracy'],
+                    metrics['precision'],
+                    metrics['recall'],
+                    metrics['f1_score']
+                ])
+            
+            metrics_df = pd.DataFrame(
+                metrics_data,
+                index=clf_names,
+                columns=['Accuracy', 'Precision', 'Recall', 'F1-Score']
+            )
+            
+            metrics_df.plot(kind='bar', ax=plt.gca())
+            plt.title('Performance Metrics Comparison')
+            plt.ylabel('Score')
+            plt.xticks(rotation=45)
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            # 2. Training time comparison
+            plt.subplot(2, 3, 2)
+            training_times = [results[clf]['training_time'] for clf in clf_names]
+            plt.bar(clf_names, training_times, color=['skyblue', 'lightcoral', 'lightgreen'])
+            plt.title('Training Time Comparison')
+            plt.ylabel('Time (seconds)')
+            plt.xticks(rotation=45)
+            plt.grid(True, alpha=0.3)
+            
+            # 3. Inference speed comparison
+            plt.subplot(2, 3, 3)
+            inference_speeds = [results[clf]['inference_speed'] for clf in clf_names]
+            plt.bar(clf_names, inference_speeds, color=['orange', 'purple', 'brown'])
+            plt.title('Inference Speed Comparison')
+            plt.ylabel('Samples per second')
+            plt.xticks(rotation=45)
+            plt.grid(True, alpha=0.3)
+            
+            # 4-6. Confusion matrices for each classifier
+            for i, clf_name in enumerate(clf_names):
+                plt.subplot(2, 3, 4 + i)
+                cm = results[clf_name]['confusion_matrix']
+                
+                if SEABORN_AVAILABLE:
+                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                               xticklabels=class_names, yticklabels=class_names)
+                else:
+                    # Fallback to matplotlib imshow
+                    im = plt.imshow(cm, interpolation='nearest', cmap='Blues')
+                    plt.colorbar(im)
+                    # Add text annotations
+                    for row in range(cm.shape[0]):
+                        for col in range(cm.shape[1]):
+                            plt.text(col, row, str(cm[row, col]), 
+                                   ha='center', va='center', color='black')
+                    
+                    plt.xticks(range(len(class_names)), class_names, rotation=45)
+                    plt.yticks(range(len(class_names)), class_names)
+                
+                plt.title(f'{clf_name} - Confusion Matrix')
+                plt.ylabel('True Label')
+                plt.xlabel('Predicted Label')
+            
+            plt.tight_layout()
+            
+            # Save the plot
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"classifier_evaluation_{timestamp}.png"
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            print(f"📊 Evaluation plots saved as: {filename}")
+            
+        except Exception as e:
+            print(f"⚠️  Could not save plots: {e}")
     
     def _rebuild_embeddings_from_database(self):
         """Rebuild embeddings and names from database"""

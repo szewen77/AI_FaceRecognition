@@ -305,6 +305,9 @@ Camera Controls (when live window is active):
         ttk.Button(btn_frame, text="🎯 Performance Report", 
                   command=self.show_performance_report).pack(side=tk.LEFT, padx=5)
         
+        ttk.Button(btn_frame, text="📊 Comprehensive Evaluation", 
+                  command=self.run_comprehensive_evaluation).pack(side=tk.LEFT, padx=5)
+        
         # Report display
         report_frame = ttk.LabelFrame(reports_frame, text="Attendance Report", padding=10)
         report_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
@@ -912,6 +915,222 @@ RECENT RECORDS (Last 20):
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to show performance report: {e}")
+    
+    def run_comprehensive_evaluation(self):
+        """Run comprehensive classifier evaluation with multiple metrics"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        # Check if we have enough data
+        status = self.system.get_system_status()
+        if status['enrolled_users'] < 2:
+            messagebox.showerror("Error", "Need at least 2 enrolled users for evaluation!")
+            return
+        
+        if status['total_embeddings'] < 10:
+            messagebox.showerror("Error", "Need at least 10 samples for comprehensive evaluation!")
+            return
+        
+        # Show progress dialog
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("🔄 Running Comprehensive Evaluation")
+        progress_window.geometry("400x150")
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        
+        # Center the window
+        progress_window.update_idletasks()
+        x = (progress_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (progress_window.winfo_screenheight() // 2) - (150 // 2)
+        progress_window.geometry(f"400x150+{x}+{y}")
+        
+        progress_label = tk.Label(progress_window, text="🔄 Initializing evaluation...", 
+                                font=('Arial', 12))
+        progress_label.pack(pady=20)
+        
+        progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+        progress_bar.pack(pady=10, padx=20, fill=tk.X)
+        progress_bar.start()
+        
+        def run_evaluation():
+            try:
+                # Update progress
+                progress_window.after(0, lambda: progress_label.config(text="📊 Running classifier evaluation..."))
+                
+                # Run the comprehensive evaluation
+                results = self.system.comprehensive_classifier_evaluation(
+                    test_size=0.3, 
+                    cv_folds=5, 
+                    save_plots=True
+                )
+                
+                # Close progress window
+                progress_window.after(0, progress_window.destroy)
+                
+                if 'error' in results:
+                    self.root.after(0, lambda: messagebox.showerror("Error", results['error']))
+                    return
+                
+                # Show results in a new window
+                self.root.after(0, lambda: self.show_evaluation_results(results))
+                
+            except Exception as e:
+                error_msg = str(e)
+                progress_window.after(0, progress_window.destroy)
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Evaluation failed: {error_msg}"))
+        
+        # Run evaluation in background thread
+        import threading
+        eval_thread = threading.Thread(target=run_evaluation, daemon=True)
+        eval_thread.start()
+    
+    def show_evaluation_results(self, results):
+        """Display comprehensive evaluation results"""
+        # Create new window for results
+        results_window = tk.Toplevel(self.root)
+        results_window.title("📊 Comprehensive Classifier Evaluation Results")
+        results_window.geometry("1000x700")
+        
+        # Create notebook for different tabs
+        notebook = ttk.Notebook(results_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Tab 1: Summary Report
+        summary_frame = ttk.Frame(notebook)
+        notebook.add(summary_frame, text="📋 Summary Report")
+        
+        summary_text = scrolledtext.ScrolledText(summary_frame, font=('Courier', 10))
+        summary_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        summary_text.insert(tk.END, results['comparison_report'])
+        
+        # Tab 2: Detailed Metrics
+        details_frame = ttk.Frame(notebook)
+        notebook.add(details_frame, text="📊 Detailed Metrics")
+        
+        # Create treeview for detailed metrics
+        columns = ('Metric', 'SVM', 'KNN', 'LogisticRegression')
+        tree = ttk.Treeview(details_frame, columns=columns, show='headings', height=15)
+        
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=150, anchor='center')
+        
+        # Populate the tree with metrics
+        metrics_to_show = [
+            ('Accuracy', 'accuracy'),
+            ('Precision', 'precision'),
+            ('Recall', 'recall'),
+            ('F1-Score', 'f1_score'),
+            ('CV Accuracy Mean', 'cv_accuracy_mean'),
+            ('CV Accuracy Std', 'cv_accuracy_std'),
+            ('Training Time (s)', 'training_time'),
+            ('Inference Time (s)', 'inference_time'),
+            ('Inference Speed (sps)', 'inference_speed')
+        ]
+        
+        for metric_name, metric_key in metrics_to_show:
+            values = [metric_name]
+            for clf_name in ['SVM', 'KNN', 'LogisticRegression']:
+                if clf_name in results:
+                    value = results[clf_name][metric_key]
+                    if metric_key in ['training_time', 'inference_time']:
+                        values.append(f"{value:.4f}")
+                    elif metric_key == 'inference_speed':
+                        values.append(f"{value:.1f}")
+                    else:
+                        values.append(f"{value:.3f}")
+                else:
+                    values.append("N/A")
+            tree.insert('', 'end', values=values)
+        
+        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Add scrollbar to treeview
+        scrollbar = ttk.Scrollbar(details_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Tab 3: Per-Class Performance
+        class_frame = ttk.Frame(notebook)
+        notebook.add(class_frame, text="👥 Per-Class Performance")
+        
+        class_text = scrolledtext.ScrolledText(class_frame, font=('Courier', 10))
+        class_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Generate per-class report
+        class_report = "=" * 60 + "\n"
+        class_report += "                PER-CLASS PERFORMANCE ANALYSIS\n"
+        class_report += "=" * 60 + "\n\n"
+        
+        for clf_name in ['SVM', 'KNN', 'LogisticRegression']:
+            if clf_name in results:
+                class_report += f"{clf_name} CLASSIFIER:\n"
+                class_report += "-" * 30 + "\n"
+                
+                class_names = results[clf_name]['class_names']
+                precision_per_class = results[clf_name]['precision_per_class']
+                recall_per_class = results[clf_name]['recall_per_class']
+                f1_per_class = results[clf_name]['f1_per_class']
+                
+                class_report += f"{'Class':<15} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}\n"
+                class_report += "-" * 50 + "\n"
+                
+                for i, class_name in enumerate(class_names):
+                    if i < len(precision_per_class):
+                        class_report += f"{class_name:<15} {precision_per_class[i]:<10.3f} "
+                        class_report += f"{recall_per_class[i]:<10.3f} {f1_per_class[i]:<10.3f}\n"
+                
+                class_report += "\n"
+        
+        class_text.insert(tk.END, class_report)
+        
+        # Save buttons
+        button_frame = ttk.Frame(results_window)
+        button_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        def save_summary():
+            filename = filedialog.asksaveasfilename(
+                title="Save Evaluation Summary",
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+            )
+            if filename:
+                with open(filename, 'w') as f:
+                    f.write(results['comparison_report'])
+                messagebox.showinfo("Success", f"Summary saved to: {filename}")
+        
+        def save_detailed():
+            filename = filedialog.asksaveasfilename(
+                title="Save Detailed Metrics",
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            )
+            if filename:
+                # Create DataFrame with all metrics
+                data = []
+                for clf_name in ['SVM', 'KNN', 'LogisticRegression']:
+                    if clf_name in results:
+                        data.append({
+                            'Classifier': clf_name,
+                            'Accuracy': results[clf_name]['accuracy'],
+                            'Precision': results[clf_name]['precision'],
+                            'Recall': results[clf_name]['recall'],
+                            'F1_Score': results[clf_name]['f1_score'],
+                            'CV_Accuracy_Mean': results[clf_name]['cv_accuracy_mean'],
+                            'CV_Accuracy_Std': results[clf_name]['cv_accuracy_std'],
+                            'Training_Time': results[clf_name]['training_time'],
+                            'Inference_Time': results[clf_name]['inference_time'],
+                            'Inference_Speed': results[clf_name]['inference_speed']
+                        })
+                
+                df = pd.DataFrame(data)
+                df.to_csv(filename, index=False)
+                messagebox.showinfo("Success", f"Detailed metrics saved to: {filename}")
+        
+        ttk.Button(button_frame, text="💾 Save Summary", command=save_summary).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="💾 Save Detailed CSV", command=save_detailed).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="❌ Close", command=results_window.destroy).pack(side=tk.RIGHT, padx=5)
     
     def apply_settings(self):
         """Apply threshold settings"""
