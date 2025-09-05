@@ -1032,14 +1032,22 @@ RECENT RECORDS (Last 20):
         for metric_name, metric_key in metrics_to_show:
             values = [metric_name]
             for clf_name in ['SVM', 'KNN', 'LogisticRegression']:
-                if clf_name in results:
-                    value = results[clf_name][metric_key]
-                    if metric_key in ['training_time', 'inference_time']:
-                        values.append(f"{value:.4f}")
-                    elif metric_key == 'inference_speed':
-                        values.append(f"{value:.1f}")
+                if clf_name in results and clf_name != 'training_metadata':
+                    # Handle missing metrics gracefully
+                    if metric_key in results[clf_name]:
+                        value = results[clf_name][metric_key]
+                        if metric_key in ['training_time', 'inference_time']:
+                            values.append(f"{value:.4f}")
+                        elif metric_key == 'inference_speed':
+                            values.append(f"{value:.1f}")
+                        else:
+                            values.append(f"{value:.3f}")
                     else:
-                        values.append(f"{value:.3f}")
+                        # Handle missing cross-validation metrics
+                        if metric_key in ['cv_accuracy_mean', 'cv_accuracy_std']:
+                            values.append("N/A")
+                        else:
+                            values.append("Missing")
                 else:
                     values.append("N/A")
             tree.insert('', 'end', values=values)
@@ -1064,22 +1072,41 @@ RECENT RECORDS (Last 20):
         class_report += "=" * 60 + "\n\n"
         
         for clf_name in ['SVM', 'KNN', 'LogisticRegression']:
-            if clf_name in results:
+            if clf_name in results and clf_name != 'training_metadata':
                 class_report += f"{clf_name} CLASSIFIER:\n"
                 class_report += "-" * 30 + "\n"
                 
-                class_names = results[clf_name]['class_names']
-                precision_per_class = results[clf_name]['precision_per_class']
-                recall_per_class = results[clf_name]['recall_per_class']
-                f1_per_class = results[clf_name]['f1_per_class']
-                
-                class_report += f"{'Class':<15} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}\n"
-                class_report += "-" * 50 + "\n"
-                
-                for i, class_name in enumerate(class_names):
-                    if i < len(precision_per_class):
-                        class_report += f"{class_name:<15} {precision_per_class[i]:<10.3f} "
-                        class_report += f"{recall_per_class[i]:<10.3f} {f1_per_class[i]:<10.3f}\n"
+                # Check if per-class metrics exist
+                if ('class_names' in results[clf_name] and 
+                    'precision_per_class' in results[clf_name] and
+                    'recall_per_class' in results[clf_name] and
+                    'f1_per_class' in results[clf_name]):
+                    
+                    class_names = results[clf_name]['class_names']
+                    precision_per_class = results[clf_name]['precision_per_class']
+                    recall_per_class = results[clf_name]['recall_per_class']
+                    f1_per_class = results[clf_name]['f1_per_class']
+                    
+                    class_report += f"{'Class':<15} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}\n"
+                    class_report += "-" * 50 + "\n"
+                    
+                    for i, class_name in enumerate(class_names):
+                        if i < len(precision_per_class):
+                            class_name_short = class_name[:12] if len(class_name) > 12 else class_name
+                            class_report += f"{class_name_short:<15} {precision_per_class[i]:<10.3f} "
+                            class_report += f"{recall_per_class[i]:<10.3f} {f1_per_class[i]:<10.3f}\n"
+                else:
+                    # Show overall metrics instead
+                    accuracy = results[clf_name].get('accuracy', 0)
+                    precision = results[clf_name].get('precision', 0)
+                    recall = results[clf_name].get('recall', 0)
+                    f1 = results[clf_name].get('f1_score', 0)
+                    
+                    class_report += f"Overall Performance:\n"
+                    class_report += f"  Accuracy:  {accuracy:.3f}\n"
+                    class_report += f"  Precision: {precision:.3f}\n"
+                    class_report += f"  Recall:    {recall:.3f}\n"
+                    class_report += f"  F1-Score:  {f1:.3f}\n"
                 
                 class_report += "\n"
         
@@ -1110,18 +1137,18 @@ RECENT RECORDS (Last 20):
                 # Create DataFrame with all metrics
                 data = []
                 for clf_name in ['SVM', 'KNN', 'LogisticRegression']:
-                    if clf_name in results:
+                    if clf_name in results and clf_name != 'training_metadata':
                         data.append({
                             'Classifier': clf_name,
-                            'Accuracy': results[clf_name]['accuracy'],
-                            'Precision': results[clf_name]['precision'],
-                            'Recall': results[clf_name]['recall'],
-                            'F1_Score': results[clf_name]['f1_score'],
-                            'CV_Accuracy_Mean': results[clf_name]['cv_accuracy_mean'],
-                            'CV_Accuracy_Std': results[clf_name]['cv_accuracy_std'],
-                            'Training_Time': results[clf_name]['training_time'],
-                            'Inference_Time': results[clf_name]['inference_time'],
-                            'Inference_Speed': results[clf_name]['inference_speed']
+                            'Accuracy': results[clf_name].get('accuracy', 0),
+                            'Precision': results[clf_name].get('precision', 0),
+                            'Recall': results[clf_name].get('recall', 0),
+                            'F1_Score': results[clf_name].get('f1_score', 0),
+                            'CV_Accuracy_Mean': results[clf_name].get('cv_accuracy_mean', 'N/A'),
+                            'CV_Accuracy_Std': results[clf_name].get('cv_accuracy_std', 'N/A'),
+                            'Training_Time': results[clf_name].get('training_time', 0),
+                            'Inference_Time': results[clf_name].get('inference_time', 0),
+                            'Inference_Speed': results[clf_name].get('inference_speed', 0)
                         })
                 
                 df = pd.DataFrame(data)

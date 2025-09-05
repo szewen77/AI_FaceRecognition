@@ -765,6 +765,257 @@ class FixedMultiClassifierSystem:
         
         return success_count > 0
     
+    def train_test_evaluate_and_save(self, test_size=0.2, random_state=42, output_to_files=True):
+        """
+        Perform a stratified train/test split, train on train set only, evaluate on test set,
+        and optionally save detailed metrics for each classifier.
+        """
+        if len(self.known_embeddings) < 10:
+            print("Need at least 10 samples to run train/test evaluation")
+            return {"error": "insufficient_data"}
+
+        # Prepare data
+        X = np.array(self.known_embeddings)
+        y = np.array(self.known_names)
+
+        # Encode labels
+        from sklearn.preprocessing import LabelEncoder
+        from sklearn.model_selection import train_test_split
+        le = LabelEncoder()
+        y_encoded = le.fit_transform(y)
+
+        # Try stratified split; fall back to regular split if needed
+        try:
+            unique, counts = np.unique(y_encoded, return_counts=True)
+            min_samples_per_class = int(min(counts)) if len(counts) > 0 else 0
+            if min_samples_per_class >= 2:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y_encoded, test_size=test_size, random_state=random_state, stratify=y_encoded
+                )
+            else:
+                print("⚠️  Some classes have <2 samples. Using non-stratified split.")
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y_encoded, test_size=test_size, random_state=random_state
+                )
+        except ValueError as e:
+            print(f"⚠️  Stratified split failed: {e}. Using non-stratified split.")
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y_encoded, test_size=test_size, random_state=random_state
+            )
+
+        results = {}
+        timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+        # Train and evaluate each classifier
+        for clf_name, clf in self.classifiers.items():
+            print(f"\n🔄 Training {clf_name} on train split and evaluating on test split...")
+
+            # Train
+            start_time = time.time()
+            clf.train(X_train, le.inverse_transform(y_train))
+            training_time = time.time() - start_time
+
+            # Predict on test
+            start_time = time.time()
+            y_pred_encoded = []
+            y_pred_conf = []
+            for sample in X_test:
+                try:
+                    pred_name, confidence = clf.predict(sample)
+                    pred_encoded = le.transform([pred_name])[0] if pred_name in le.classes_ else np.bincount(y_train).argmax()
+                except Exception:
+                    pred_encoded = np.bincount(y_train).argmax()
+                    confidence = 0.0
+                y_pred_encoded.append(pred_encoded)
+                y_pred_conf.append(float(confidence))
+
+            inference_time = time.time() - start_time
+
+            y_pred_encoded = np.array(y_pred_encoded)
+
+            # Metrics
+            acc = accuracy_score(y_test, y_pred_encoded)
+            prec = precision_score(y_test, y_pred_encoded, average='weighted', zero_division=0)
+            rec = recall_score(y_test, y_pred_encoded, average='weighted', zero_division=0)
+            f1 = f1_score(y_test, y_pred_encoded, average='weighted', zero_division=0)
+            cm = confusion_matrix(y_test, y_pred_encoded)
+
+            results[clf_name] = {
+                'accuracy': float(acc),
+                'precision': float(prec),
+                'recall': float(rec),
+                'f1_score': float(f1),
+                'confusion_matrix': cm.tolist(),
+                'class_names': le.classes_.tolist(),
+                'training_time': float(training_time),
+                'inference_time': float(inference_time),
+                'inference_speed': float(len(X_test) / inference_time) if inference_time > 0 else 0.0,
+            }
+
+            print(f"  ✅ {clf_name} | Acc: {acc:.3f} | F1: {f1:.3f}")
+
+        # Optionally save results
+        if output_to_files:
+            try:
+                import json
+                self.model_path.mkdir(parents=True, exist_ok=True)
+
+                # Per-classifier JSON
+                for clf_name, metrics in results.items():
+                    out_path = self.model_path / f"{clf_name}_results.json"
+                    with open(out_path, 'w') as f:
+                        json.dump(metrics, f, indent=2)
+
+                # Combined CSV
+                comparison_rows = []
+                for clf_name, m in results.items():
+                    comparison_rows.append({
+                        'classifier': clf_name,
+                        'accuracy': m['accuracy'],
+                        'precision': m['precision'],
+                        'recall': m['recall'],
+                        'f1_score': m['f1_score'],
+                        'training_time': m['training_time'],
+                        'inference_time': m['inference_time'],
+                        'inference_speed': m['inference_speed']
+                    })
+                df = pd.DataFrame(comparison_rows)
+                csv_path = self.model_path / f"algorithm_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                df.to_csv(csv_path, index=False)
+
+                # Comprehensive results with metadata
+                training_metadata = {
+                    'dataset_path': str(self.model_path.parent / 'Original Images'),
+                    'total_embeddings': int(len(self.known_embeddings)),
+                    'total_people': int(len(set(self.known_names))),
+                    'max_images_per_person': int(pd.Series(self.known_names).value_counts().max()) if self.known_names else 0,
+                    'min_images_per_person': int(pd.Series(self.known_names).value_counts().min()) if self.known_names else 0,
+                    'training_date': timestamp,
+                    'person_names': sorted(list(set(self.known_names)))
+                }
+
+                comprehensive = {
+                    'training_metadata': training_metadata,
+                    'evaluation_results': results
+                }
+                with open(self.model_path / 'comprehensive_evaluation_results.json', 'w') as f:
+                    json.dump(comprehensive, f, indent=2)
+
+                print("💾 Saved evaluation artifacts to 'models/'")
+            except Exception as e:
+                print(f"⚠️  Failed to save evaluation artifacts: {e}")
+
+        return results
+
+    def bulk_enroll_from_directories_and_evaluate(self, faces_dir='Faces/Faces', originals_dir='Original Images/Original Images', max_images_per_person=None, test_size=0.2):
+        """
+        Scan Faces and Original Images directories, enroll all users, retrain, and evaluate.
+        - faces_dir: path where each person's images are stored (flat with name in filename or per-folder)
+        - originals_dir: optional second dataset to include
+        - max_images_per_person: cap per person if desired
+        - test_size: fraction for held-out test split
+        """
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
+
+        def iter_people_images(root_dir):
+            root = Path(root_dir)
+            if not root.exists():
+                return {}
+            people_to_files = {}
+            # Case 1: per-person subfolders
+            for sub in root.iterdir():
+                if sub.is_dir():
+                    person_name = sub.name
+                    files = [p for p in sub.iterdir() if p.suffix.lower() in image_extensions]
+                    if files:
+                        people_to_files.setdefault(person_name, []).extend(files)
+            # Case 2: flat folder, names embedded in filenames like `Name_XX.jpg`
+            flat_files = [p for p in root.iterdir() if p.is_file() and p.suffix.lower() in image_extensions]
+            for f in flat_files:
+                base = f.stem
+                # Split on last underscore if present
+                if '_' in base:
+                    person_name = base.rsplit('_', 1)[0]
+                else:
+                    person_name = base
+                people_to_files.setdefault(person_name, []).append(f)
+            return people_to_files
+
+        combined = {}
+        for directory in [faces_dir, originals_dir]:
+            ppl = iter_people_images(directory)
+            for name, files in ppl.items():
+                if max_images_per_person:
+                    files = files[:max_images_per_person]
+                combined.setdefault(name, [])
+                # Deduplicate while preserving order
+                seen = set()
+                for fp in files:
+                    s = str(fp)
+                    if s not in seen:
+                        combined[name].append(fp)
+                        seen.add(s)
+
+        # Enroll everyone
+        enrolled_count = 0
+        for name, files in combined.items():
+            if not files:
+                continue
+            print(f"\n=== Enrolling {name} ({len(files)} images) ===")
+            self.enrollment_system.enroll_from_file_list(name, [str(p) for p in files])
+            enrolled_count += 1
+
+        print(f"\n✅ Enrollment complete. People processed: {enrolled_count}")
+
+        # Rebuild embeddings and retrain classifiers with all data
+        self._rebuild_embeddings_from_database()
+        self._update_all_classifiers_with_new_data()
+        self.save_system()
+
+        # Evaluate with held-out test set and save metrics
+        return self.train_test_evaluate_and_save(test_size=test_size, random_state=42, output_to_files=True)
+
+    def enroll_from_single_dataset_root_and_evaluate(self, dataset_root, max_images_per_person=None, test_size=0.2):
+        """
+        Support a single folder with subfolders per person, e.g.:
+            dataset/
+              person1/*.jpg
+              person2/*.jpg
+        Enrolls everyone found, retrains, and evaluates.
+        """
+        root = Path(dataset_root)
+        if not root.exists():
+            print(f"Dataset root not found: {dataset_root}")
+            return {"error": "dataset_not_found"}
+
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
+        people = {}
+        for sub in root.iterdir():
+            if sub.is_dir():
+                files = [p for p in sub.iterdir() if p.suffix.lower() in image_extensions]
+                if max_images_per_person:
+                    files = files[:max_images_per_person]
+                if files:
+                    people[sub.name] = files
+
+        if not people:
+            print("No people/images found under dataset root")
+            return {"error": "no_data"}
+
+        enrolled = 0
+        for name, files in people.items():
+            print(f"\n=== Enrolling {name} ({len(files)} images) ===")
+            self.enrollment_system.enroll_from_file_list(name, [str(p) for p in files])
+            enrolled += 1
+
+        print(f"\n✅ Enrollment complete from single root. People processed: {enrolled}")
+
+        # Rebuild, retrain, save, evaluate
+        self._rebuild_embeddings_from_database()
+        self._update_all_classifiers_with_new_data()
+        self.save_system()
+        return self.train_test_evaluate_and_save(test_size=test_size, random_state=42, output_to_files=True)
+
     def predict_with_voting(self, embedding, debug=False):
         """
         Predict using all classifiers and majority voting
@@ -891,10 +1142,56 @@ class FixedMultiClassifierSystem:
         
         return report
     
-    def comprehensive_classifier_evaluation(self, test_size=0.3, cv_folds=5, save_plots=True):
+    def comprehensive_classifier_evaluation(self, test_size=0.3, cv_folds=5, save_plots=True, use_saved_results=True):
         """
-        Comprehensive evaluation of all classifiers with multiple metrics
+        Enhanced comprehensive evaluation that can use pre-computed training results
         """
+        # Check if we have saved comprehensive results
+        results_path = self.model_path / "comprehensive_evaluation_results.json"
+        
+        if use_saved_results and results_path.exists():
+            print("📊 Loading saved comprehensive evaluation results...")
+            try:
+                import json
+                with open(results_path, 'r') as f:
+                    saved_data = json.load(f)
+                
+                # Check if results are recent and valid
+                evaluation_results = saved_data.get('evaluation_results', {})
+                training_metadata = saved_data.get('training_metadata', {})
+                
+                if evaluation_results and len(evaluation_results) >= 3:  # All three classifiers
+                    print("✅ Using saved comprehensive evaluation results")
+                    print(f"📅 Training Date: {training_metadata.get('training_date', 'Unknown')}")
+                    print(f"👥 Dataset Size: {training_metadata.get('total_people', 0)} people, {training_metadata.get('total_embeddings', 0)} embeddings")
+                    
+                    # Convert back to the expected format
+                    results = {}
+                    for clf_name, metrics in evaluation_results.items():
+                        # Convert confusion matrix back to numpy array if it's a list
+                        if 'confusion_matrix' in metrics and isinstance(metrics['confusion_matrix'], list):
+                            metrics['confusion_matrix'] = np.array(metrics['confusion_matrix'])
+                        
+                        results[clf_name] = metrics
+                    
+                    # Add training metadata to results for display
+                    results['training_metadata'] = training_metadata
+                    
+                    # Generate enhanced comparison report
+                    comparison_report = self._generate_enhanced_comparison_report(results, training_metadata)
+                    results['comparison_report'] = comparison_report
+                    
+                    # Note: Plotting functionality removed to avoid threading issues
+                    
+                    return results
+                
+            except Exception as e:
+                print(f"⚠️  Error loading saved results: {e}")
+                print("Falling back to real-time evaluation...")
+        
+        # Fall back to original evaluation if no saved results or if requested
+        print("🔄 Running real-time classifier evaluation...")
+        
         if len(self.known_embeddings) < 10:
             return {"error": "Need at least 10 samples for comprehensive evaluation"}
         
@@ -1062,9 +1359,7 @@ class FixedMultiClassifierSystem:
         comparison_report = self._generate_comparison_report(results)
         results['comparison_report'] = comparison_report
         
-        # Save visualizations
-        if save_plots:
-            self._save_evaluation_plots(results, unique_classes)
+        # Note: Plotting functionality removed to avoid threading issues
         
         print("\n✅ Comprehensive evaluation completed!")
         return results
@@ -1144,106 +1439,80 @@ class FixedMultiClassifierSystem:
         
         return report
     
-    def _save_evaluation_plots(self, results, class_names):
-        """Save evaluation plots including confusion matrices and performance charts"""
-        if not MATPLOTLIB_AVAILABLE:
-            print("⚠️  Matplotlib not available. Skipping plot generation.")
-            return
-            
-        try:
-            
-            # Set up the plotting style
-            plt.style.use('default')
-            if SEABORN_AVAILABLE:
-                sns.set_palette("husl")
-            
-            # Create a figure with subplots
-            fig = plt.figure(figsize=(20, 15))
-            
-            # 1. Performance metrics comparison
-            plt.subplot(2, 3, 1)
-            metrics_data = []
-            clf_names = []
-            
-            for clf_name, metrics in results.items():
-                if clf_name == 'comparison_report':
-                    continue
-                clf_names.append(clf_name)
-                metrics_data.append([
-                    metrics['accuracy'],
-                    metrics['precision'],
-                    metrics['recall'],
-                    metrics['f1_score']
-                ])
-            
-            metrics_df = pd.DataFrame(
-                metrics_data,
-                index=clf_names,
-                columns=['Accuracy', 'Precision', 'Recall', 'F1-Score']
-            )
-            
-            metrics_df.plot(kind='bar', ax=plt.gca())
-            plt.title('Performance Metrics Comparison')
-            plt.ylabel('Score')
-            plt.xticks(rotation=45)
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            
-            # 2. Training time comparison
-            plt.subplot(2, 3, 2)
-            training_times = [results[clf]['training_time'] for clf in clf_names]
-            plt.bar(clf_names, training_times, color=['skyblue', 'lightcoral', 'lightgreen'])
-            plt.title('Training Time Comparison')
-            plt.ylabel('Time (seconds)')
-            plt.xticks(rotation=45)
-            plt.grid(True, alpha=0.3)
-            
-            # 3. Inference speed comparison
-            plt.subplot(2, 3, 3)
-            inference_speeds = [results[clf]['inference_speed'] for clf in clf_names]
-            plt.bar(clf_names, inference_speeds, color=['orange', 'purple', 'brown'])
-            plt.title('Inference Speed Comparison')
-            plt.ylabel('Samples per second')
-            plt.xticks(rotation=45)
-            plt.grid(True, alpha=0.3)
-            
-            # 4-6. Confusion matrices for each classifier
-            for i, clf_name in enumerate(clf_names):
-                plt.subplot(2, 3, 4 + i)
-                cm = results[clf_name]['confusion_matrix']
-                
-                if SEABORN_AVAILABLE:
-                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                               xticklabels=class_names, yticklabels=class_names)
-                else:
-                    # Fallback to matplotlib imshow
-                    im = plt.imshow(cm, interpolation='nearest', cmap='Blues')
-                    plt.colorbar(im)
-                    # Add text annotations
-                    for row in range(cm.shape[0]):
-                        for col in range(cm.shape[1]):
-                            plt.text(col, row, str(cm[row, col]), 
-                                   ha='center', va='center', color='black')
-                    
-                    plt.xticks(range(len(class_names)), class_names, rotation=45)
-                    plt.yticks(range(len(class_names)), class_names)
-                
-                plt.title(f'{clf_name} - Confusion Matrix')
-                plt.ylabel('True Label')
-                plt.xlabel('Predicted Label')
-            
-            plt.tight_layout()
-            
-            # Save the plot
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"classifier_evaluation_{timestamp}.png"
-            plt.savefig(filename, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            print(f"📊 Evaluation plots saved as: {filename}")
-            
-        except Exception as e:
-            print(f"⚠️  Could not save plots: {e}")
+    def _generate_enhanced_comparison_report(self, results, training_metadata):
+        """Generate enhanced comparison report with training metadata"""
+        report = "=" * 80 + "\n"
+        report += "                    ENHANCED ALGORITHM COMPARISON REPORT\n"
+        report += "=" * 80 + "\n\n"
+        
+        # Training dataset information
+        report += f"📊 TRAINING DATASET INFORMATION:\n"
+        report += f"  • Dataset Path: {training_metadata.get('dataset_path', 'Unknown')}\n"
+        report += f"  • Total People: {training_metadata.get('total_people', 0)}\n"
+        report += f"  • Total Embeddings: {training_metadata.get('total_embeddings', 0)}\n"
+        report += f"  • Training Date: {training_metadata.get('training_date', 'Unknown')}\n"
+        report += f"  • Max Images per Person: {training_metadata.get('max_images_per_person', 'Unknown')}\n\n"
+        
+        # Filter out metadata from results for metrics calculation
+        metrics_results = {k: v for k, v in results.items() if k != 'training_metadata'}
+        
+        # Performance metrics table
+        report += f"📊 PERFORMANCE METRICS COMPARISON:\n"
+        report += "-" * 80 + "\n"
+        report += f"{'Algorithm':<20} {'Accuracy':<10} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}\n"
+        report += "-" * 80 + "\n"
+        
+        for clf_name, metrics in metrics_results.items():
+            report += f"{clf_name:<20} {metrics['accuracy']:<10.3f} {metrics['precision']:<10.3f} "
+            report += f"{metrics['recall']:<10.3f} {metrics['f1_score']:<10.3f}\n"
+        
+        # Computational efficiency
+        report += f"\n⚡ COMPUTATIONAL EFFICIENCY:\n"
+        report += "-" * 70 + "\n"
+        report += f"{'Algorithm':<20} {'Training(s)':<12} {'Inference(s)':<12} {'Speed(sps)':<12}\n"
+        report += "-" * 70 + "\n"
+        
+        for clf_name, metrics in metrics_results.items():
+            report += f"{clf_name:<20} {metrics.get('training_time', 0):<12.3f} "
+            report += f"{metrics.get('inference_time', 0):<12.3f} {metrics.get('inference_speed', 0):<12.1f}\n"
+        
+        # Best performers
+        report += f"\n🏆 BEST PERFORMERS:\n"
+        report += "-" * 40 + "\n"
+        
+        # Find best in each metric
+        best_accuracy = max(metrics_results.items(), key=lambda x: x[1]['accuracy'])
+        best_precision = max(metrics_results.items(), key=lambda x: x[1]['precision'])
+        best_recall = max(metrics_results.items(), key=lambda x: x[1]['recall'])
+        best_f1 = max(metrics_results.items(), key=lambda x: x[1]['f1_score'])
+        best_speed = max(metrics_results.items(), key=lambda x: x[1].get('inference_speed', 0))
+        
+        report += f"🎯 Best Accuracy:   {best_accuracy[0]} ({best_accuracy[1]['accuracy']:.3f})\n"
+        report += f"🎯 Best Precision:  {best_precision[0]} ({best_precision[1]['precision']:.3f})\n"
+        report += f"🎯 Best Recall:     {best_recall[0]} ({best_recall[1]['recall']:.3f})\n"
+        report += f"🎯 Best F1-Score:   {best_f1[0]} ({best_f1[1]['f1_score']:.3f})\n"
+        report += f"⚡ Fastest:         {best_speed[0]} ({best_speed[1].get('inference_speed', 0):.1f} sps)\n"
+        
+        # Recommendations
+        report += f"\n💡 RECOMMENDATIONS:\n"
+        report += "-" * 50 + "\n"
+        
+        if best_accuracy[1]['accuracy'] > 0.9:
+            report += f"✅ For maximum accuracy: Use {best_accuracy[0]}\n"
+        
+        if best_speed[1].get('inference_speed', 0) > 10:
+            report += f"⚡ For real-time applications: Use {best_speed[0]}\n"
+        
+        if best_f1[1]['f1_score'] > 0.85:
+            report += f"⚖️  For balanced performance: Use {best_f1[0]}\n"
+        
+        report += "\n" + "=" * 80 + "\n"
+        
+        return report
+    
+    # Enhanced plotting function removed to avoid threading issues
+    
+    # Plotting function removed to avoid threading issues
     
     def _rebuild_embeddings_from_database(self):
         """Rebuild embeddings and names from database"""
@@ -1343,6 +1612,7 @@ class FixedMultiClassifierSystem:
                 
                 # # Rebuild embeddings from database (more reliable than saved data)
                 # self._rebuild_embeddings_from_database()
+                
                 
                 # Load each classifier
                 load_results = {}
