@@ -1,155 +1,231 @@
-# Face Recognition Attendance System
+# 🎯 Multi-Classifier Face Recognition Attendance System
 
-A real-time face recognition attendance system built with PyTorch, FaceNet, and OpenCV.
+A comprehensive face recognition system that uses multiple machine learning algorithms (SVM, KNN, Logistic Regression) with FaceNet embeddings for accurate face identification and attendance tracking.
 
-## Features
+## 🌟 Features
 
-- **Real-time face detection** using MTCNN
-- **Face recognition** using FaceNet embeddings
-- **Attendance tracking** with SQLite database
-- **Webcam enrollment** for new users
-- **Image-based enrollment** from folders
-- **Attendance reports** generation
-- **Multi-person support** with SVM classifier
+### **Core Functionality**
+- **Multi-Algorithm Approach**: Uses SVM, KNN, and Logistic Regression with majority voting
+- **FaceNet Integration**: State-of-the-art face embeddings using pre-trained FaceNet model
+- **Real-time Recognition**: Live webcam attendance marking with confidence thresholds
+- **Database Management**: SQLite database for user enrollment and attendance records
+- **Modern GUI**: User-friendly interface built with tkinter
 
-## Requirements
+### **Advanced Features**
+- **Stratified Train/Test Split**: Reliable evaluation with 80/20 data split
+- **Face Verification**: Prevents duplicate enrollments with similarity checking
+- **Performance Tracking**: Real-time monitoring of each classifier's accuracy
+- **Comprehensive Evaluation**: Detailed metrics and comparison reports
+- **Bulk Enrollment**: Support for dataset folders and individual image uploads
 
-- Python 3.7+
-- PyTorch
-- OpenCV
-- scikit-learn
-- facenet-pytorch
-- pandas
-- numpy
+## 📊 Performance Metrics
 
-## Installation
+Based on recent evaluation results:
+- **SVM**: 86.5% accuracy, 89.2% precision, 87.6% F1-score
+- **KNN**: 86.5% accuracy, 89.2% precision, 87.6% F1-score  
+- **Logistic Regression**: 83.8% accuracy, 86.5% precision, 84.9% F1-score
+- **Inference Speed**: 11-57 samples/second depending on algorithm
 
-1. **Clone the repository:**
-   ```bash
-   git clone <your-repo-url>
-   cd face-recognition-attendance
-   ```
+## 🚀 Quick Start
 
-2. **Create virtual environment:**
-   ```bash
-   conda create -n facenet_env python=3.7
-   conda activate facenet_env
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install torch torchvision
-   pip install opencv-python
-   pip install facenet-pytorch
-   pip install scikit-learn
-   pip install pandas numpy
-   ```
-
-## Usage
-
-### 1. Enroll Users
-
-**Using webcam:**
-```bash
-python face_attendance.py --mode enroll --name "John" --webcam --samples 5
-```
-
-**Using images:**
-```bash
-python face_attendance.py --mode enroll --name "John" "Jane" --images "imageFolder"
-```
-
-**Folder structure for images:**
-```
-imageFolder/
-├── John/
-│   ├── john1.jpg
-│   └── john2.jpg
-└── Jane/
-    ├── jane1.jpg
-    └── jane2.jpg
-```
-
-### 2. Run Attendance System
+### **1. Installation**
 
 ```bash
-python face_attendance.py --mode run
+# Clone the repository
+git clone <repository-url>
+cd AI_FaceRecognition
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-### 3. Generate Reports
+### **2. Launch the Application**
 
 ```bash
-python face_attendance.py --mode report
+# Option 1: Use the batch file (Windows)
+launch_gui.bat
+
+# Option 2: Run directly
+python main_app.py
 ```
 
-## Command Line Arguments
+### **3. First-Time Setup**
 
-- `--mode`: Operation mode (`enroll`, `run`, `report`)
-- `--name`: Name(s) of person(s) to enroll
-- `--images`: Path to images folder for enrollment
-- `--webcam`: Use webcam for enrollment
-- `--samples`: Number of samples for webcam enrollment (default: 10)
-- `--threshold`: Confidence threshold (default: 0.7)
+1. **Enroll Users**: Go to the "Enrollment" tab
+2. **Add Images**: Upload images or use webcam capture
+3. **Train System**: Click "🔄 Retrain & Evaluate" to train all algorithms
+4. **Start Attendance**: Use the "Live Attendance" tab for real-time recognition
 
-## System Architecture
-
-### Components
-
-1. **Face Detection**: MTCNN for real-time face detection
-2. **Face Recognition**: FaceNet for 512-dimensional embeddings
-3. **Classification**: SVM for multi-person recognition
-4. **Database**: SQLite for attendance records
-5. **UI**: OpenCV for webcam interface
-
-### Workflow
-
-1. **Enrollment**: Capture face embeddings and train classifier
-2. **Detection**: Real-time face detection in webcam feed
-3. **Recognition**: Compare embeddings with enrolled users
-4. **Attendance**: Mark attendance in database
-5. **Reporting**: Generate attendance reports
-
-## File Structure
+## 📁 Project Structure
 
 ```
-├── face_attendance.py      # Main application
-├── requirements.txt        # Dependencies
-├── README.md              # This file
-├── .gitignore             # Git ignore rules
-├── models/                # Saved models (auto-created)
-├── imageFolder/           # Training images (user-created)
-└── attendance.db          # Database (auto-created)
+AI_FaceRecognition/
+├── main_app.py                 # Main GUI application
+├── face_core.py               # Core face recognition logic
+├── classifiers/               # Individual classifier implementations
+│   ├── svm_classifier.py
+│   ├── knn_classifier.py
+│   └── logistic_regression.py
+├── models/                    # Trained models and evaluation results
+│   ├── *_model.pkl           # Saved classifier models
+│   ├── *_results.json        # Evaluation metrics
+│   └── algorithm_comparison_*.csv
+├── Faces/Faces/              # Face dataset (flat structure)
+├── Original Images/          # Original dataset (folder structure)
+├── attendance.db             # SQLite database
+└── requirements.txt          # Python dependencies
 ```
 
-## Configuration
+## 🎮 Usage Guide
 
-### Confidence Threshold
-- Default: 0.7
-- Higher values = stricter recognition
-- Lower values = more permissive
+### **Enrollment Process**
 
-### Model Settings
-- Face detection: MTCNN with 160x160 input
-- Face recognition: FaceNet with 512-dimensional embeddings
-- Classifier: SVM with linear kernel
+#### **Method 1: Webcam Capture**
+1. Go to "Enrollment" tab
+2. Enter person's name
+3. Click "📷 Capture from Webcam"
+4. Follow on-screen instructions (press SPACE to capture)
 
-## Troubleshooting
+#### **Method 2: Image Upload**
+1. Go to "Enrollment" tab
+2. Enter person's name
+3. Click "📁 Select Images" and choose multiple images
+4. Click "✅ Enroll Person"
 
-### Common Issues
+#### **Method 3: Bulk Enrollment**
+```python
+from face_core import FixedMultiClassifierSystem
 
-1. **No faces detected**: Ensure good lighting and clear faces
-2. **Low recognition accuracy**: Increase training samples per person
-3. **Model not created**: Need at least 2 embeddings to train classifier
-4. **Webcam not working**: Check camera permissions and availability
+system = FixedMultiClassifierSystem()
+# For folder structure: person_name/image1.jpg, image2.jpg...
+results = system.enroll_from_single_dataset_root_and_evaluate(
+    dataset_root='dataset/', 
+    test_size=0.2
+)
+```
 
-### Performance Tips
+### **Live Attendance**
 
-- Use GPU if available for faster processing
-- Reduce webcam resolution for better performance
-- Process every 5th frame for real-time operation
-- Use clear, well-lit images for enrollment
+1. Go to "Live Attendance" tab
+2. Click "🎥 Start Live Attendance"
+3. Position faces in front of camera
+4. System will automatically recognize and mark attendance
+5. Press 'q' to quit, 's' for screenshot, 'p' for performance report
 
-## Contributing
+### **Reports & Analysis**
+
+#### **Performance Reports**
+- **🎯 Performance Report**: Real-time classifier accuracy tracking
+- **📊 Comprehensive Evaluation**: Detailed metrics with train/test split
+- **🔄 Retrain & Evaluate**: Retrain all algorithms with current data
+
+#### **Attendance Reports**
+- **📋 Generate Report**: View attendance records by date range
+- **💾 Export CSV**: Export attendance data to CSV format
+
+## 🔧 Configuration
+
+### **Threshold Settings**
+- **Confidence Threshold**: Minimum confidence for recognition (default: 0.7)
+- **Verification Threshold**: Minimum similarity for face verification (default: 0.7)
+
+### **Algorithm Parameters**
+- **SVM**: Linear kernel with probability estimation
+- **KNN**: 3 nearest neighbors with cosine distance
+- **Logistic Regression**: L2 regularization with 1000 max iterations
+
+## 📈 Evaluation & Metrics
+
+### **Train/Test Split Logic**
+- **80% Training**: Used to train all algorithms
+- **20% Testing**: Held-out data for unbiased evaluation
+- **Stratified Split**: Maintains equal proportion for each person
+
+### **Evaluation Metrics**
+- **Accuracy**: Overall correct predictions
+- **Precision**: True positives / (True positives + False positives)
+- **Recall**: True positives / (True positives + False negatives)
+- **F1-Score**: Harmonic mean of precision and recall
+- **Inference Speed**: Samples processed per second
+
+### **Saved Results**
+All evaluation results are automatically saved to `models/`:
+- `KNN_results.json`, `SVM_results.json`, `LogisticRegression_results.json`
+- `algorithm_comparison_YYYYMMDD_HHMMSS.csv`
+- `comprehensive_evaluation_results.json`
+
+## 🛠️ Technical Details
+
+### **Face Recognition Pipeline**
+1. **Face Detection**: MTCNN for robust face detection
+2. **Face Alignment**: Automatic face cropping and normalization
+3. **Feature Extraction**: FaceNet embeddings (512-dimensional vectors)
+4. **Classification**: Multi-algorithm approach with majority voting
+5. **Verification**: Cosine similarity for enrollment validation
+
+### **Database Schema**
+- **enrolled_users**: User information and enrollment dates
+- **user_embeddings**: Face embeddings for each user
+- **attendance**: Attendance records with timestamps and confidence scores
+
+### **System Requirements**
+- **Python**: 3.7+
+- **RAM**: 4GB+ recommended
+- **GPU**: Optional (CUDA support for faster processing)
+- **Camera**: USB webcam for live attendance
+
+## 🔍 Troubleshooting
+
+### **Common Issues**
+
+#### **"No face detected"**
+- Ensure good lighting
+- Position face clearly in camera view
+- Check if face is too small or too large
+
+#### **"System not initialized"**
+- Wait for system startup to complete
+- Check if all dependencies are installed
+- Restart the application
+
+#### **Low recognition accuracy**
+- Enroll more images per person (recommended: 10-20)
+- Ensure good image quality and variety
+- Adjust confidence threshold in settings
+
+#### **Import errors**
+```bash
+pip install --upgrade -r requirements.txt
+```
+
+### **Performance Optimization**
+- Use GPU if available (automatic detection)
+- Reduce image resolution for faster processing
+- Limit number of enrolled users for real-time performance
+
+## 📚 API Reference
+
+### **Core Classes**
+
+#### **FixedMultiClassifierSystem**
+Main system class that orchestrates all components.
+
+```python
+system = FixedMultiClassifierSystem(
+    model_path='models/',
+    database_path='attendance.db',
+    confidence_threshold=0.7,
+    verification_threshold=0.7
+)
+```
+
+#### **Key Methods**
+- `enroll_person()`: Enroll new person with images
+- `run_live_attendance()`: Start real-time attendance
+- `train_test_evaluate_and_save()`: Train and evaluate with train/test split
+- `bulk_enroll_from_directories_and_evaluate()`: Bulk enrollment from folders
+
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -157,12 +233,27 @@ python face_attendance.py --mode report
 4. Add tests if applicable
 5. Submit a pull request
 
-## License
+## 📄 License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Acknowledgments
+## 🙏 Acknowledgments
 
-- FaceNet implementation: [facenet-pytorch](https://github.com/timesler/facenet-pytorch)
-- MTCNN: [MTCNN](https://github.com/ipazc/mtcnn)
-- OpenCV for computer vision operations 
+- **FaceNet**: Face recognition model by Google
+- **MTCNN**: Multi-task CNN for face detection
+- **scikit-learn**: Machine learning algorithms
+- **OpenCV**: Computer vision library
+- **PyTorch**: Deep learning framework
+
+## 📞 Support
+
+For issues and questions:
+1. Check the troubleshooting section
+2. Review the evaluation results in `models/`
+3. Create an issue with detailed error information
+
+---
+
+**Last Updated**: September 2025  
+**Version**: 2.0  
+**Status**: Active Development

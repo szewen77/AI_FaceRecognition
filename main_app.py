@@ -308,6 +308,9 @@ Camera Controls (when live window is active):
         ttk.Button(btn_frame, text="📊 Comprehensive Evaluation", 
                   command=self.run_comprehensive_evaluation).pack(side=tk.LEFT, padx=5)
         
+        ttk.Button(btn_frame, text="🔄 Retrain & Evaluate", 
+                  command=self.retrain_and_evaluate).pack(side=tk.LEFT, padx=5)
+        
         # Report display
         report_frame = ttk.LabelFrame(reports_frame, text="Attendance Report", padding=10)
         report_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
@@ -984,6 +987,215 @@ RECENT RECORDS (Last 20):
         import threading
         eval_thread = threading.Thread(target=run_evaluation, daemon=True)
         eval_thread.start()
+    
+    def retrain_and_evaluate(self):
+        """Retrain all algorithms with current data and show comprehensive evaluation"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        # Check if we have enough data
+        status = self.system.get_system_status()
+        if status['enrolled_users'] < 2:
+            messagebox.showerror("Error", "Need at least 2 enrolled users for evaluation!")
+            return
+        
+        if status['total_embeddings'] < 10:
+            messagebox.showerror("Error", "Need at least 10 samples for comprehensive evaluation!")
+            return
+        
+        # Show progress dialog
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("🔄 Retraining & Evaluating All Algorithms")
+        progress_window.geometry("500x200")
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        
+        # Center the window
+        progress_window.update_idletasks()
+        x = (progress_window.winfo_screenwidth() // 2) - (500 // 2)
+        y = (progress_window.winfo_screenheight() // 2) - (200 // 2)
+        progress_window.geometry(f"500x200+{x}+{y}")
+        
+        progress_label = tk.Label(progress_window, text="🔄 Retraining all algorithms with current data...", 
+                                font=('Arial', 12))
+        progress_label.pack(pady=20)
+        
+        progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+        progress_bar.pack(pady=10, padx=20, fill=tk.X)
+        progress_bar.start()
+        
+        def run_retrain_evaluation():
+            try:
+                # Update progress
+                progress_window.after(0, lambda: progress_label.config(text="📊 Rebuilding embeddings from database..."))
+                
+                # Rebuild embeddings from database to ensure we have all current data
+                self.system._rebuild_embeddings_from_database()
+                
+                progress_window.after(0, lambda: progress_label.config(text="🔄 Retraining all classifiers..."))
+                
+                # Retrain all classifiers with current data
+                self.system._update_all_classifiers_with_new_data()
+                
+                progress_window.after(0, lambda: progress_label.config(text="💾 Saving updated models..."))
+                
+                # Save the updated system
+                self.system.save_system()
+                
+                progress_window.after(0, lambda: progress_label.config(text="📊 Running comprehensive evaluation..."))
+                
+                # Run comprehensive evaluation with train/test split
+                results = self.system.train_test_evaluate_and_save(
+                    test_size=0.2, 
+                    random_state=42, 
+                    output_to_files=True
+                )
+                
+                # Close progress window
+                progress_window.after(0, progress_window.destroy)
+                
+                if 'error' in results:
+                    self.root.after(0, lambda: messagebox.showerror("Error", results['error']))
+                    return
+                
+                # Show results in a new window
+                self.root.after(0, lambda: self.show_retrain_evaluation_results(results))
+                
+            except Exception as e:
+                error_msg = str(e)
+                progress_window.after(0, progress_window.destroy)
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Retrain & evaluation failed: {error_msg}"))
+        
+        # Run retrain evaluation in background thread
+        import threading
+        retrain_thread = threading.Thread(target=run_retrain_evaluation, daemon=True)
+        retrain_thread.start()
+    
+    def show_retrain_evaluation_results(self, results):
+        """Display retrain evaluation results with enhanced information"""
+        # Create new window for results
+        results_window = tk.Toplevel(self.root)
+        results_window.title("🔄 Retrain & Evaluation Results - All Algorithms")
+        results_window.geometry("1200x800")
+        
+        # Create notebook for different tabs
+        notebook = ttk.Notebook(results_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Tab 1: Algorithm Comparison
+        comparison_frame = ttk.Frame(notebook)
+        notebook.add(comparison_frame, text="📊 Algorithm Comparison")
+        
+        comparison_text = scrolledtext.ScrolledText(comparison_frame, font=('Courier', 10))
+        comparison_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Generate comparison report
+        comparison_report = "🔄 RETRAIN & EVALUATION RESULTS\n"
+        comparison_report += "=" * 60 + "\n\n"
+        comparison_report += f"📅 Evaluation Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        comparison_report += f"📊 Dataset: {len(self.system.known_embeddings)} embeddings, {len(set(self.system.known_names))} people\n"
+        comparison_report += f"🎯 Test Split: 20% held-out for evaluation\n\n"
+        
+        comparison_report += "📈 PERFORMANCE METRICS:\n"
+        comparison_report += "-" * 60 + "\n"
+        comparison_report += f"{'Algorithm':<20} {'Accuracy':<10} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}\n"
+        comparison_report += "-" * 60 + "\n"
+        
+        for clf_name, metrics in results.items():
+            if isinstance(metrics, dict) and 'accuracy' in metrics:
+                comparison_report += f"{clf_name:<20} {metrics['accuracy']:<10.3f} {metrics['precision']:<10.3f} "
+                comparison_report += f"{metrics['recall']:<10.3f} {metrics['f1_score']:<10.3f}\n"
+        
+        comparison_report += "\n⚡ COMPUTATIONAL EFFICIENCY:\n"
+        comparison_report += "-" * 60 + "\n"
+        comparison_report += f"{'Algorithm':<20} {'Training(s)':<12} {'Inference(s)':<12} {'Speed(sps)':<12}\n"
+        comparison_report += "-" * 60 + "\n"
+        
+        for clf_name, metrics in results.items():
+            if isinstance(metrics, dict) and 'training_time' in metrics:
+                comparison_report += f"{clf_name:<20} {metrics['training_time']:<12.3f} "
+                comparison_report += f"{metrics['inference_time']:<12.3f} {metrics['inference_speed']:<12.1f}\n"
+        
+        # Find best performers
+        best_accuracy = max(results.items(), key=lambda x: x[1].get('accuracy', 0) if isinstance(x[1], dict) else 0)
+        best_f1 = max(results.items(), key=lambda x: x[1].get('f1_score', 0) if isinstance(x[1], dict) else 0)
+        best_speed = max(results.items(), key=lambda x: x[1].get('inference_speed', 0) if isinstance(x[1], dict) else 0)
+        
+        comparison_report += "\n🏆 BEST PERFORMERS:\n"
+        comparison_report += "-" * 40 + "\n"
+        if isinstance(best_accuracy[1], dict):
+            comparison_report += f"🎯 Best Accuracy:   {best_accuracy[0]} ({best_accuracy[1]['accuracy']:.3f})\n"
+        if isinstance(best_f1[1], dict):
+            comparison_report += f"🎯 Best F1-Score:   {best_f1[0]} ({best_f1[1]['f1_score']:.3f})\n"
+        if isinstance(best_speed[1], dict):
+            comparison_report += f"⚡ Fastest:         {best_speed[0]} ({best_speed[1]['inference_speed']:.1f} sps)\n"
+        
+        comparison_report += "\n💾 SAVED FILES:\n"
+        comparison_report += "-" * 40 + "\n"
+        comparison_report += "• models/KNN_results.json\n"
+        comparison_report += "• models/SVM_results.json\n"
+        comparison_report += "• models/LogisticRegression_results.json\n"
+        comparison_report += "• models/algorithm_comparison_YYYYMMDD_HHMMSS.csv\n"
+        comparison_report += "• models/comprehensive_evaluation_results.json\n"
+        
+        comparison_text.insert(tk.END, comparison_report)
+        
+        # Tab 2: Detailed Metrics
+        details_frame = ttk.Frame(notebook)
+        notebook.add(details_frame, text="📋 Detailed Metrics")
+        
+        details_text = scrolledtext.ScrolledText(details_frame, font=('Courier', 9))
+        details_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        for clf_name, metrics in results.items():
+            if isinstance(metrics, dict) and 'accuracy' in metrics:
+                details_text.insert(tk.END, f"\n{'='*50}\n")
+                details_text.insert(tk.END, f"ALGORITHM: {clf_name}\n")
+                details_text.insert(tk.END, f"{'='*50}\n")
+                details_text.insert(tk.END, f"Accuracy:     {metrics['accuracy']:.4f}\n")
+                details_text.insert(tk.END, f"Precision:    {metrics['precision']:.4f}\n")
+                details_text.insert(tk.END, f"Recall:       {metrics['recall']:.4f}\n")
+                details_text.insert(tk.END, f"F1-Score:     {metrics['f1_score']:.4f}\n")
+                details_text.insert(tk.END, f"Training Time: {metrics['training_time']:.3f}s\n")
+                details_text.insert(tk.END, f"Inference Time: {metrics['inference_time']:.3f}s\n")
+                details_text.insert(tk.END, f"Inference Speed: {metrics['inference_speed']:.1f} samples/sec\n")
+                
+                if 'class_names' in metrics:
+                    details_text.insert(tk.END, f"\nClasses: {', '.join(metrics['class_names'])}\n")
+        
+        # Tab 3: System Status
+        status_frame = ttk.Frame(notebook)
+        notebook.add(status_frame, text="ℹ️ System Status")
+        
+        status_text = scrolledtext.ScrolledText(status_frame, font=('Courier', 10))
+        status_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        system_status = self.system.get_system_status()
+        status_report = "🔄 RETRAINED SYSTEM STATUS\n"
+        status_report += "=" * 40 + "\n\n"
+        status_report += f"System Type: {system_status['system_type']}\n"
+        status_report += f"Enrolled Users: {system_status['enrolled_users']}\n"
+        status_report += f"Total Embeddings: {system_status['total_embeddings']}\n"
+        status_report += f"Active Classifiers: {', '.join(system_status['active_classifiers'])}\n"
+        status_report += f"Confidence Threshold: {system_status['confidence_threshold']}\n"
+        status_report += f"Verification Threshold: {system_status['verification_threshold']}\n\n"
+        
+        status_report += "📊 CLASSIFIER PERFORMANCE TRACKING:\n"
+        status_report += "-" * 40 + "\n"
+        for clf_name, perf in system_status['classifier_performance'].items():
+            if perf['total'] > 0:
+                accuracy = (perf['correct'] / perf['total']) * 100
+                status_report += f"{clf_name}: {perf['correct']}/{perf['total']} ({accuracy:.1f}%)\n"
+            else:
+                status_report += f"{clf_name}: No predictions yet\n"
+        
+        status_text.insert(tk.END, status_report)
+        
+        # Add close button
+        close_btn = ttk.Button(results_window, text="✅ Close", 
+                              command=results_window.destroy)
+        close_btn.pack(pady=10)
     
     def show_evaluation_results(self, results):
         """Display comprehensive evaluation results"""
