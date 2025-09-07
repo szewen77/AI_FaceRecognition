@@ -1,22 +1,24 @@
 # 🎯 Multi-Classifier Face Recognition Attendance System
 
-A comprehensive face recognition system that uses multiple machine learning algorithms (SVM, KNN, Logistic Regression) with FaceNet embeddings for accurate face identification and attendance tracking.
+A comprehensive face recognition system that uses multiple machine learning algorithms (SVM, KNN, Logistic Regression) with FaceNet embeddings for accurate face identification and attendance tracking. Features user-friendly live attendance with popup confirmations and comprehensive dataset management.
 
 ## 🌟 Features
 
 ### **Core Functionality**
 - **Multi-Algorithm Approach**: Uses SVM, KNN, and Logistic Regression with majority voting
 - **FaceNet Integration**: State-of-the-art face embeddings using pre-trained FaceNet model
-- **Real-time Recognition**: Live webcam attendance marking with confidence thresholds
+- **User-Friendly Live Attendance**: Clean camera interface with automatic popup confirmations
 - **Database Management**: SQLite database for user enrollment and attendance records
-- **Modern GUI**: User-friendly interface built with tkinter
+- **Modern GUI**: Intuitive interface built with tkinter and organized tabs
 
 ### **Advanced Features**
 - **Stratified Train/Test Split**: Reliable evaluation with 80/20 data split
 - **Face Verification**: Prevents duplicate enrollments with similarity checking
 - **Performance Tracking**: Real-time monitoring of each classifier's accuracy
-- **Comprehensive Evaluation**: Detailed metrics and comparison reports
-- **Bulk Enrollment**: Support for dataset folders and individual image uploads
+- **Comprehensive Evaluation**: Detailed metrics and comparison reports with bar charts
+- **Bulk Enrollment**: Support for dataset folders, LFW dataset integration, and individual uploads
+- **Smart Dataset Management**: Automatic cleanup of low-sample users and memory optimization
+- **Duplicate Prevention**: Intelligent checking to avoid re-enrolling existing users
 
 ## 📊 Performance Metrics
 
@@ -106,22 +108,42 @@ results = system.enroll_from_single_dataset_root_and_evaluate(
 
 ### **Live Attendance**
 
-1. Go to "Live Attendance" tab
-2. Click "🎥 Start Live Attendance"
+1. Go to "🎥 Live Attendance" tab
+2. Click "▶️ Start Live Attendance"
 3. Position faces in front of camera
-4. System will automatically recognize and mark attendance
-5. Press 'q' to quit, 's' for screenshot, 'p' for performance report
+4. System automatically recognizes and marks attendance
+5. **Success popup appears** with confirmation details
+6. **Camera window stays open** for continuous monitoring
+7. Press 'q' to quit manually when done
+
+**Features:**
+- Clean, non-flickering interface
+- Automatic popup confirmation when attendance is marked
+- 3-second cooldown prevents duplicate markings
+- Continuous monitoring for multiple people
+- Natural camera window size (no forced resizing)
 
 ### **Reports & Analysis**
 
 #### **Performance Reports**
 - **🎯 Performance Report**: Real-time classifier accuracy tracking
 - **📊 Comprehensive Evaluation**: Detailed metrics with train/test split
-- **🔄 Retrain & Evaluate**: Retrain all algorithms with current data
+- **🔄 Retrain Current Students**: Retrain all algorithms with current enrolled users
+- **📊 Generate Performance Charts**: Interactive bar charts showing algorithm performance
+- **📊 System Status**: Detailed system information and dataset statistics
 
 #### **Attendance Reports**
 - **📋 Generate Report**: View attendance records by date range
 - **💾 Export CSV**: Export attendance data to CSV format
+
+### **User Management**
+
+#### **User List & Management**
+- **👥 Users Tab**: View all enrolled users with sample counts
+- **🧹 Clean Low Samples**: Remove users with fewer than 10 samples
+- **👥 Add 100 More Students**: Bulk add students with 10 samples each
+- **Total User Count**: Real-time display of enrolled user count
+- **Duplicate Prevention**: Automatic checking to avoid re-enrolling existing users
 
 ## 🔧 Configuration
 
@@ -130,9 +152,14 @@ results = system.enroll_from_single_dataset_root_and_evaluate(
 - **Verification Threshold**: Minimum similarity for face verification (default: 0.7)
 
 ### **Algorithm Parameters**
-- **SVM**: Linear kernel with probability estimation
-- **KNN**: 3 nearest neighbors with cosine distance
+- **SVM**: Linear kernel with probability estimation and fallback training
+- **KNN**: 5 nearest neighbors with distance weighting and euclidean metric
 - **Logistic Regression**: L2 regularization with 1000 max iterations
+
+### **Memory Optimization**
+- **Image Limiting**: Maximum 10 images per person for training efficiency
+- **Random Sampling**: Balanced dataset with random image selection
+- **Large Dataset Handling**: Automatic optimization for datasets with many images per person
 
 ## 📈 Evaluation & Metrics
 
@@ -153,6 +180,13 @@ All evaluation results are automatically saved to `models/`:
 - `KNN_results.json`, `SVM_results.json`, `LogisticRegression_results.json`
 - `algorithm_comparison_YYYYMMDD_HHMMSS.csv`
 - `comprehensive_evaluation_results.json`
+- `multi_classifier_system_data.pkl` (system state)
+
+### **Performance Charts**
+- **Interactive Bar Charts**: Visual comparison of algorithm performance
+- **Multiple Metrics**: Accuracy, Precision, Recall, F1-Score, Training Time, Inference Speed
+- **Export Capability**: Save charts as images for reports
+- **Fallback Display**: Text-based summary if charts fail to load
 
 ## 🛠️ Technical Details
 
@@ -221,9 +255,11 @@ system = FixedMultiClassifierSystem(
 
 #### **Key Methods**
 - `enroll_person()`: Enroll new person with images
-- `run_live_attendance()`: Start real-time attendance
+- `run_live_attendance()`: Start user-friendly real-time attendance with popup confirmations
 - `train_test_evaluate_and_save()`: Train and evaluate with train/test split
-- `bulk_enroll_from_directories_and_evaluate()`: Bulk enrollment from folders
+- `add_more_students()`: Add additional students with duplicate checking
+- `remove_students_with_insufficient_samples()`: Clean up users with low sample counts
+- `get_system_status()`: Get detailed system information and statistics
 
 ## 🤝 Contributing
 
@@ -254,6 +290,26 @@ For issues and questions:
 
 ---
 
-**Last Updated**: September 2025  
-**Version**: 2.0  
+## 🆕 Recent Updates
+
+### **Version 2.1 Features**
+- ✅ **User-Friendly Live Attendance**: Clean interface with popup confirmations
+- ✅ **Smart Dataset Management**: Automatic cleanup and memory optimization
+- ✅ **Bulk Student Addition**: Add 100+ students with duplicate prevention
+- ✅ **Performance Charts**: Interactive bar charts with fallback display
+- ✅ **Enhanced GUI**: Better button placement and user experience
+- ✅ **Memory Optimization**: Handles large datasets efficiently
+- ✅ **Robust Error Handling**: Improved stability and error recovery
+
+### **Key Improvements**
+- **Live Attendance**: Camera window stays open with natural size, popup confirmations
+- **User Management**: Total user count display, low-sample cleanup
+- **Performance Visualization**: Bar charts with proper y-axis scaling (0-100%)
+- **Dataset Integration**: LFW dataset support with configurable limits
+- **Code Cleanup**: Removed unused functions, improved organization
+
+---
+
+**Last Updated**: January 2025  
+**Version**: 2.1  
 **Status**: Active Development

@@ -10925,7 +10925,7 @@
     "lh",
     "zhulan"
   ],
-  "training_time": 0.4270033836364746,
-  "inference_time": 36.806654930114746,
-  "inference_speed": 5.596813956365629
+  "training_time": 0.420224666595459,
+  "inference_time": 20.73033618927002,
+  "inference_speed": 9.937127797600562
 }

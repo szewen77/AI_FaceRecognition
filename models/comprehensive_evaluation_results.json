@@ -5,7 +5,7 @@
     "total_people": 103,
     "max_images_per_person": 10,
     "min_images_per_person": 9,
-    "training_date": "2025-09-07T16:40:40",
+    "training_date": "2025-09-07T17:08:01",
     "person_names": [
       "Chorpa",
       "David",
@@ -11040,9 +11040,9 @@
         "lh",
         "zhulan"
       ],
-      "training_time": 0.4270033836364746,
-      "inference_time": 36.806654930114746,
-      "inference_speed": 5.596813956365629
+      "training_time": 0.420224666595459,
+      "inference_time": 20.73033618927002,
+      "inference_speed": 9.937127797600562
     },
     "KNN": {
       "accuracy": 0.8106796116504854,
@@ -21971,9 +21971,9 @@
         "lh",
         "zhulan"
       ],
-      "training_time": 0.0023734569549560547,
-      "inference_time": 54.15524435043335,
-      "inference_speed": 3.803879060483855
+      "training_time": 0.0019042491912841797,
+      "inference_time": 44.95302152633667,
+      "inference_speed": 4.5825618168805535
     },
     "LogisticRegression": {
       "accuracy": 0.8009708737864077,
@@ -32902,9 +32902,9 @@
         "lh",
         "zhulan"
       ],
-      "training_time": 0.14661693572998047,
-      "inference_time": 20.300394296646118,
-      "inference_speed": 10.14758614979384
+      "training_time": 0.13915777206420898,
+      "inference_time": 45.404781103134155,
+      "inference_speed": 4.536967142999407
     }
   }
 }
