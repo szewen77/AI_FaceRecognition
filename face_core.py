@@ -729,7 +729,18 @@ class FixedMultiClassifierSystem:
             print("No embeddings to train with")
             return False
         
-        print("\n🔄 UPDATING ALL CLASSIFIERS...")
+        # Check memory usage and optimize if needed
+        total_embeddings = len(self.known_embeddings)
+        unique_people = len(set(self.known_names))
+        avg_per_person = total_embeddings / unique_people if unique_people > 0 else 0
+        
+        print(f"\n🔄 UPDATING ALL CLASSIFIERS...")
+        print(f"📊 Dataset: {total_embeddings} embeddings from {unique_people} people (avg: {avg_per_person:.1f} per person)")
+        
+        # Memory optimization for large datasets
+        if total_embeddings > 1000:
+            print("⚠️  Large dataset detected - using memory optimization")
+            self._optimize_dataset_for_training()
         
         success_count = 0
         
@@ -747,6 +758,16 @@ class FixedMultiClassifierSystem:
                     # SVM & LogReg: Full retraining with old + new data
                     print(f"  → Retraining {clf_name} with all data")
                     success = classifier.train(self.known_embeddings, self.known_names)
+                    
+                    # Special check for SVM classifier
+                    if clf_name == 'SVM' and success and hasattr(classifier, 'svm_model') and classifier.svm_model is not None:
+                        if not hasattr(classifier.svm_model, 'support_vectors_') or classifier.svm_model.support_vectors_ is None:
+                            print(f"  ⚠️  SVM model may not be properly fitted, attempting to fix...")
+                            fix_success = self._fix_svm_classifier(classifier)
+                            if fix_success:
+                                print(f"  ✅ SVM model fixed successfully")
+                            else:
+                                print(f"  ⚠️  SVM model fix failed, will use similarity-based fallback")
                 
                 if success:
                     print(f"  ✅ {clf_name} updated successfully")
@@ -764,6 +785,88 @@ class FixedMultiClassifierSystem:
         print(f"✅ All classifiers now trained on {len(self.known_embeddings)} samples from {unique_people} people")
         
         return success_count > 0
+    
+    def _optimize_dataset_for_training(self, max_images_per_person=10):
+        """Optimize dataset for training by limiting images per person"""
+        if len(self.known_embeddings) == 0:
+            return
+        
+        # Group embeddings by person
+        person_embeddings = {}
+        for embedding, name in zip(self.known_embeddings, self.known_names):
+            if name not in person_embeddings:
+                person_embeddings[name] = []
+            person_embeddings[name].append(embedding)
+        
+        # Optimize each person's embeddings
+        optimized_embeddings = []
+        optimized_names = []
+        
+        for name, embeddings in person_embeddings.items():
+            if len(embeddings) > max_images_per_person:
+                # Take a diverse sample
+                import random
+                random.seed(42)
+                selected_embeddings = random.sample(embeddings, max_images_per_person)
+                print(f"  📊 {name}: {len(embeddings)} → {len(selected_embeddings)} images")
+            else:
+                selected_embeddings = embeddings
+            
+            optimized_embeddings.extend(selected_embeddings)
+            optimized_names.extend([name] * len(selected_embeddings))
+        
+        # Update the dataset
+        self.known_embeddings = optimized_embeddings
+        self.known_names = optimized_names
+        
+        print(f"✅ Dataset optimized: {len(self.known_embeddings)} embeddings from {len(set(self.known_names))} people")
+    
+    def _fix_svm_classifier(self, svm_classifier):
+        """Fix SVM classifier if it's not properly trained"""
+        try:
+            from sklearn.svm import SVC
+            import numpy as np
+            
+            # Get current data
+            X = np.array(svm_classifier.known_embeddings)
+            y = np.array(svm_classifier.known_names)
+            
+            # Encode labels
+            y_encoded = svm_classifier.label_encoder.transform(y)
+            
+            # Try different SVM configurations
+            configs = [
+                {'kernel': 'linear', 'C': 1.0},
+                {'kernel': 'rbf', 'C': 1.0, 'gamma': 'scale'},
+                {'kernel': 'rbf', 'C': 0.1, 'gamma': 'auto'},
+                {'kernel': 'poly', 'C': 1.0, 'degree': 2}
+            ]
+            
+            for i, config in enumerate(configs):
+                try:
+                    print(f"🔄 Trying SVM config {i+1}: {config}")
+                    svm_classifier.svm_model = SVC(
+                        probability=True,
+                        random_state=42,
+                        **config
+                    )
+                    svm_classifier.svm_model.fit(X, y_encoded)
+                    
+                    # Check if properly fitted
+                    if hasattr(svm_classifier.svm_model, 'support_vectors_') and svm_classifier.svm_model.support_vectors_ is not None:
+                        print(f"✅ SVM fixed with config {i+1}: {config}")
+                        return True
+                        
+                except Exception as e:
+                    print(f"❌ SVM config {i+1} failed: {e}")
+                    continue
+            
+            print("❌ All SVM configurations failed, using similarity-based fallback")
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error fixing SVM classifier: {e}")
+            return False
     
     def train_test_evaluate_and_save(self, test_size=0.2, random_state=42, output_to_files=True):
         """
@@ -1015,6 +1118,229 @@ class FixedMultiClassifierSystem:
         self._update_all_classifiers_with_new_data()
         self.save_system()
         return self.train_test_evaluate_and_save(test_size=test_size, random_state=42, output_to_files=True)
+    
+    def _enroll_from_directory(self, directory_path, prefix="", max_samples_per_person=10, existing_names=None):
+        """Helper method to enroll people from a directory with limited samples per person and duplicate checking"""
+        dir_path = Path(directory_path)
+        if not dir_path.exists():
+            return 0
+        
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
+        people_count = 0
+        
+        # Check if it's a flat directory with named files
+        flat_files = [f for f in dir_path.iterdir() if f.is_file() and f.suffix.lower() in image_extensions]
+        if flat_files:
+            # Group by person name (extracted from filename)
+            people_files = {}
+            for f in flat_files:
+                base = f.stem
+                if '_' in base:
+                    person_name = base.rsplit('_', 1)[0]
+                else:
+                    person_name = base
+                
+                if prefix:
+                    person_name = f"{prefix}{person_name}"
+                
+                if person_name not in people_files:
+                    people_files[person_name] = []
+                people_files[person_name].append(f)
+            
+            # Enroll each person with limited samples
+            for person_name, files in people_files.items():
+                # Check for duplicates if existing_names is provided
+                if existing_names is not None and person_name in existing_names:
+                    print(f"⏭️  Skipping {person_name}: already exists")
+                    continue
+                
+                try:
+                    # Limit to max_samples_per_person
+                    original_count = len(files)
+                    if len(files) > max_samples_per_person:
+                        import random
+                        files = random.sample(files, max_samples_per_person)
+                        print(f"📊 {person_name}: {len(files)} samples (limited from {original_count})")
+                    else:
+                        print(f"📊 {person_name}: {len(files)} samples")
+                    
+                    self.enrollment_system.enroll_from_file_list(person_name, [str(f) for f in files])
+                    people_count += 1
+                    
+                    # Add to existing_names to avoid duplicates in same run
+                    if existing_names is not None:
+                        existing_names.add(person_name)
+                        
+                except Exception as e:
+                    print(f"⚠️  Error enrolling {person_name}: {e}")
+        
+        # Check if it's a directory with subdirectories per person
+        else:
+            for subdir in dir_path.iterdir():
+                if subdir.is_dir():
+                    files = [f for f in subdir.iterdir() if f.suffix.lower() in image_extensions]
+                    if files:
+                        person_name = f"{prefix}{subdir.name}" if prefix else subdir.name
+                        
+                        # Check for duplicates if existing_names is provided
+                        if existing_names is not None and person_name in existing_names:
+                            print(f"⏭️  Skipping {person_name}: already exists")
+                            continue
+                        
+                        try:
+                            # Limit to max_samples_per_person
+                            original_count = len(files)
+                            if len(files) > max_samples_per_person:
+                                import random
+                                files = random.sample(files, max_samples_per_person)
+                                print(f"📊 {person_name}: {len(files)} samples (limited from {original_count})")
+                            else:
+                                print(f"📊 {person_name}: {len(files)} samples")
+                            
+                            self.enrollment_system.enroll_from_file_list(person_name, [str(f) for f in files])
+                            people_count += 1
+                            
+                            # Add to existing_names to avoid duplicates in same run
+                            if existing_names is not None:
+                                existing_names.add(person_name)
+                                
+                        except Exception as e:
+                            print(f"⚠️  Error enrolling {person_name}: {e}")
+        
+        return people_count
+    
+    def add_more_students(self, add_count=100, faces_dir='Faces/Faces', 
+                         originals_dir='Original Images/Original Images',
+                         lfw_path='lfw-funneled/lfw_funneled', max_lfw_people=50):
+        """
+        Add more students from datasets (default 100 more students)
+        
+        Args:
+            add_count: Number of additional students to add
+            faces_dir: Path to Faces dataset
+            originals_dir: Path to Original Images dataset  
+            lfw_path: Path to LFW dataset
+            max_lfw_people: Maximum LFW people to add
+        """
+        # Get current count and existing names
+        current_users = self.database.get_enrolled_users()
+        current_count = len(current_users)
+        existing_names = set(current_users['name'].tolist())
+        
+        print(f"📊 Current students: {current_count}")
+        print(f"🎯 Adding {add_count} more students")
+        print(f"📈 Final target: {current_count + add_count} students")
+        
+        needed = add_count
+        print(f"📈 Need to add: {needed} more students")
+        
+        added_count = 0
+        
+        # 1. Try to add from Original Images dataset first (your custom data)
+        if needed > 0:
+            print(f"\n1️⃣ Adding from Original Images dataset...")
+            originals_added = self._enroll_from_directory(originals_dir, prefix="Student_", 
+                                                        max_samples_per_person=10, 
+                                                        existing_names=existing_names)
+            added_count += originals_added
+            needed -= originals_added
+            print(f"✅ Added {originals_added} students from Original Images")
+        
+        # 2. Try to add from Faces dataset
+        if needed > 0:
+            print(f"\n2️⃣ Adding from Faces dataset...")
+            faces_added = self._enroll_from_directory(faces_dir, prefix="Student_", 
+                                                    max_samples_per_person=10,
+                                                    existing_names=existing_names)
+            added_count += faces_added
+            needed -= faces_added
+            print(f"✅ Added {faces_added} students from Faces")
+        
+        # 3. Add from LFW dataset if still needed
+        if needed > 0:
+            print(f"\n3️⃣ Adding from LFW dataset...")
+            lfw_added = self._enroll_from_lfw_subset(lfw_path, max_people=min(needed, max_lfw_people),
+                                                   max_samples_per_person=10, existing_names=existing_names)
+            added_count += lfw_added
+            needed -= lfw_added
+            print(f"✅ Added {lfw_added} students from LFW")
+        
+        # Rebuild embeddings and retrain
+        if added_count > 0:
+            print(f"\n🔄 Rebuilding embeddings and retraining...")
+            self._rebuild_embeddings_from_database()
+            self._update_all_classifiers_with_new_data()
+            self.save_system()
+        
+        final_count = len(self.database.get_enrolled_users())
+        
+        print(f"\n🎯 FINAL RESULT:")
+        print(f"📊 Total students: {final_count}")
+        print(f"📈 Students added: {added_count}")
+        print(f"✅ Target reached: {'Yes' if added_count >= add_count else 'No'}")
+        
+        return {
+            "current": current_count,
+            "added": added_count,
+            "final": final_count,
+            "target_reached": added_count >= add_count
+        }
+    
+    def _enroll_from_lfw_subset(self, lfw_path, max_people=50, max_samples_per_person=10, existing_names=None):
+        """Enroll a subset of people from LFW dataset with limited samples per person and duplicate checking"""
+        lfw_dir = Path(lfw_path)
+        if not lfw_dir.exists():
+            print(f"LFW dataset not found at: {lfw_path}")
+            return 0
+        
+        # Get all person directories
+        person_dirs = [d for d in lfw_dir.iterdir() if d.is_dir()]
+        
+        # Limit to max_people
+        person_dirs = person_dirs[:max_people]
+        
+        enrolled_count = 0
+        
+        for person_dir in person_dirs:
+            person_name = f"Student_LFW_{person_dir.name}"
+            
+            # Check for duplicates if existing_names is provided
+            if existing_names is not None and person_name in existing_names:
+                print(f"⏭️  Skipping {person_name}: already exists")
+                continue
+            
+            # Get all images for this person
+            all_image_files = [f for f in person_dir.iterdir() 
+                             if f.suffix.lower() in {'.jpg', '.jpeg', '.png', '.bmp'}]
+            
+            if len(all_image_files) == 0:
+                continue
+            
+            # Limit to max_samples_per_person
+            if len(all_image_files) > max_samples_per_person:
+                import random
+                image_files = random.sample(all_image_files, max_samples_per_person)
+                print(f"📊 {person_name}: {len(image_files)} samples (limited from {len(all_image_files)})")
+            else:
+                image_files = all_image_files
+                print(f"📊 {person_name}: {len(image_files)} samples")
+            
+            try:
+                self.enrollment_system.enroll_from_file_list(person_name, [str(f) for f in image_files])
+                enrolled_count += 1
+                
+                # Add to existing_names to avoid duplicates in same run
+                if existing_names is not None:
+                    existing_names.add(person_name)
+                
+                if enrolled_count % 10 == 0:
+                    print(f"📸 Processed {enrolled_count} LFW students...")
+                    
+            except Exception as e:
+                print(f"⚠️  Error processing {person_name}: {e}")
+                continue
+        
+        return enrolled_count
 
     def predict_with_voting(self, embedding, debug=False):
         """
@@ -1514,20 +1840,39 @@ class FixedMultiClassifierSystem:
     
     # Plotting function removed to avoid threading issues
     
-    def _rebuild_embeddings_from_database(self):
-        """Rebuild embeddings and names from database"""
+    def _rebuild_embeddings_from_database(self, max_images_per_person=10):
+        """Rebuild embeddings and names from database with memory optimization"""
         self.known_embeddings = []
         self.known_names = []
         
         try:
             enrolled_users = self.database.get_enrolled_users()
+            total_users = len(enrolled_users)
             
-            for _, user in enrolled_users.iterrows():
+            print(f"🔄 Rebuilding embeddings from {total_users} users...")
+            
+            for idx, (_, user) in enumerate(enrolled_users.iterrows()):
                 name = user['name']
                 embeddings = self.database.get_user_embeddings(name)
                 
+                # Limit images per person to prevent memory issues
+                if len(embeddings) > max_images_per_person:
+                    print(f"  📊 {name}: {len(embeddings)} images → limiting to {max_images_per_person}")
+                    # Take a random sample to maintain diversity
+                    import random
+                    random.seed(42)  # For reproducibility
+                    embeddings = random.sample(embeddings, max_images_per_person)
+                else:
+                    print(f"  📊 {name}: {len(embeddings)} images")
+                
                 self.known_embeddings.extend(embeddings)
                 self.known_names.extend([name] * len(embeddings))
+                
+                # Progress indicator for large datasets
+                if total_users > 20 and (idx + 1) % 10 == 0:
+                    print(f"  ✅ Processed {idx + 1}/{total_users} users...")
+            
+            print(f"✅ Rebuilt embeddings: {len(self.known_embeddings)} total from {len(set(self.known_names))} users")
                 
         except Exception as e:
             print(f"Error rebuilding embeddings: {e}")
@@ -1797,17 +2142,108 @@ class FixedMultiClassifierSystem:
         """Get comprehensive system status"""
         enrolled_users = self.database.get_enrolled_users()
         
+        # Calculate detailed statistics
+        total_embeddings_in_db = 0
+        max_images_per_person = 0
+        min_images_per_person = float('inf')
+        
+        for _, user in enrolled_users.iterrows():
+            embeddings = self.database.get_user_embeddings(user['name'])
+            total_embeddings_in_db += len(embeddings)
+            max_images_per_person = max(max_images_per_person, len(embeddings))
+            min_images_per_person = min(min_images_per_person, len(embeddings))
+        
+        if min_images_per_person == float('inf'):
+            min_images_per_person = 0
+        
+        avg_images_per_person = total_embeddings_in_db / len(enrolled_users) if len(enrolled_users) > 0 else 0
+        
         status = {
             'system_type': 'FixedMultiClassifier',
             'enrolled_users': len(enrolled_users),
             'total_embeddings': len(self.known_embeddings),
+            'total_embeddings_in_db': total_embeddings_in_db,
+            'avg_images_per_person': round(avg_images_per_person, 1),
+            'max_images_per_person': max_images_per_person,
+            'min_images_per_person': min_images_per_person,
             'active_classifiers': list(self.classifiers.keys()),
             'confidence_threshold': self.confidence_threshold,
             'verification_threshold': self.verifier.similarity_threshold,
-            'classifier_performance': self.classifier_performance
+            'classifier_performance': self.classifier_performance,
+            'memory_optimized': len(self.known_embeddings) < total_embeddings_in_db
         }
         
         return status
+    
+    def remove_students_with_insufficient_samples(self, min_samples=10):
+        """Remove students who have less than the specified minimum number of samples"""
+        try:
+            enrolled_users = self.database.get_enrolled_users()
+            removed_students = []
+            kept_students = []
+            
+            print(f"Checking students for minimum {min_samples} samples...")
+            
+            for _, user in enrolled_users.iterrows():
+                student_name = user['name']
+                embeddings = self.database.get_user_embeddings(student_name)
+                sample_count = len(embeddings)
+                
+                if sample_count < min_samples:
+                    print(f"Removing {student_name}: {sample_count} samples (less than {min_samples})")
+                    # Remove from database
+                    success, message = self.database.delete_enrolled_user(student_name)
+                    if success:
+                        removed_students.append({
+                            'name': student_name,
+                            'samples': sample_count
+                        })
+                        print(f"✅ Successfully removed {student_name}")
+                    else:
+                        print(f"❌ Failed to remove {student_name}: {message}")
+                else:
+                    print(f"Keeping {student_name}: {sample_count} samples")
+                    kept_students.append({
+                        'name': student_name,
+                        'samples': sample_count
+                    })
+            
+            # Rebuild embeddings and retrain classifiers if any students were removed
+            if removed_students:
+                print(f"\nRemoved {len(removed_students)} students with insufficient samples.")
+                print("Rebuilding embeddings and retraining classifiers...")
+                
+                # Rebuild embeddings from database
+                self._rebuild_embeddings_from_database(max_images_per_person=10)
+                
+                # Retrain all classifiers
+                self._update_all_classifiers_with_new_data()
+                
+                # Save updated system
+                self.save_system()
+                
+                print("System updated successfully!")
+            else:
+                print("No students removed - all have sufficient samples.")
+            
+            return {
+                'removed_count': len(removed_students),
+                'kept_count': len(kept_students),
+                'removed_students': removed_students,
+                'kept_students': kept_students,
+                'min_samples': min_samples
+            }
+            
+        except Exception as e:
+            error_msg = f"Error removing students with insufficient samples: {str(e)}"
+            print(error_msg)
+            return {
+                'error': error_msg,
+                'removed_count': 0,
+                'kept_count': 0,
+                'removed_students': [],
+                'kept_students': []
+            }
     
 
 # Utility function for easy initialization

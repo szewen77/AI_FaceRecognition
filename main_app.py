@@ -7,6 +7,7 @@ import time
 from datetime import datetime, date
 from pathlib import Path
 import pandas as pd
+import json
 
 # Add current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -242,6 +243,17 @@ Camera Controls (when live window is active):
         ttk.Button(control_frame, text="📊 View Details", 
                   command=self.view_user_details).pack(side=tk.LEFT, padx=5)
         
+        ttk.Button(control_frame, text="🧹 Clean Low Samples", 
+                  command=self.cleanup_low_samples).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(control_frame, text="👥 Add 100 More Students", 
+                  command=self.add_more_students).pack(side=tk.LEFT, padx=5)
+        
+        # Total users count
+        self.total_users_label = tk.Label(control_frame, text="Total Users: 0", 
+                                        font=('Arial', 10, 'bold'), fg='blue')
+        self.total_users_label.pack(side=tk.RIGHT, padx=10)
+        
         # Users list
         list_frame = ttk.LabelFrame(users_frame, text="Enrolled Users", padding=10)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
@@ -308,8 +320,12 @@ Camera Controls (when live window is active):
         ttk.Button(btn_frame, text="📊 Comprehensive Evaluation", 
                   command=self.run_comprehensive_evaluation).pack(side=tk.LEFT, padx=5)
         
-        ttk.Button(btn_frame, text="🔄 Retrain & Evaluate", 
+        ttk.Button(btn_frame, text="🔄 Retrain Current Students", 
                   command=self.retrain_and_evaluate).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(btn_frame, text="📊 Generate Performance Charts", 
+                  command=self.generate_performance_charts).pack(side=tk.LEFT, padx=5)
+        
         
         # Report display
         report_frame = ttk.LabelFrame(reports_frame, text="Attendance Report", padding=10)
@@ -692,6 +708,10 @@ Camera Controls (when live window is active):
             
             users = self.system.get_enrolled_users()
             
+            # Update total users count
+            total_users = len(users)
+            self.total_users_label.config(text=f"Total Users: {total_users}")
+            
             for _, user in users.iterrows():
                 enrollment_date = str(user['enrollment_date']).split()[0]
                 last_updated = str(user['last_updated']).split()[0]
@@ -989,35 +1009,56 @@ RECENT RECORDS (Last 20):
         eval_thread.start()
     
     def retrain_and_evaluate(self):
-        """Retrain all algorithms with current data and show comprehensive evaluation"""
+        """Retrain all algorithms with current enrolled students only"""
         if not self.is_initialized:
             messagebox.showerror("Error", "System not initialized!")
             return
         
-        # Check if we have enough data
+        # Get current system status
         status = self.system.get_system_status()
-        if status['enrolled_users'] < 2:
-            messagebox.showerror("Error", "Need at least 2 enrolled users for evaluation!")
+        current_students = status['enrolled_users']
+        total_embeddings = status['total_embeddings_in_db']
+        
+        if current_students < 2:
+            messagebox.showerror("Error", "Need at least 2 enrolled students for evaluation!")
             return
         
-        if status['total_embeddings'] < 10:
-            messagebox.showerror("Error", "Need at least 10 samples for comprehensive evaluation!")
+        # Show confirmation dialog
+        result = messagebox.askyesno(
+            "🔄 Retrain & Evaluate Current Students", 
+            f"Current enrolled students: {current_students}\n"
+            f"Total embeddings: {total_embeddings}\n\n"
+            f"This will:\n"
+            f"• Retrain all 3 algorithms (SVM, KNN, Logistic Regression)\n"
+            f"• Use only current enrolled students (no new data)\n"
+            f"• Run comprehensive evaluation with train/test split\n"
+            f"• Generate performance metrics and charts\n\n"
+            f"Estimated time: 2-5 minutes\n\n"
+            f"Continue?"
+        )
+        
+        if not result:
             return
         
+        # Start retraining with current data only
+        self._run_retrain_current_students_only()
+    
+    def _run_retrain_current_students_only(self):
+        """Run retraining with current enrolled students only (no new data)"""
         # Show progress dialog
         progress_window = tk.Toplevel(self.root)
-        progress_window.title("🔄 Retraining & Evaluating All Algorithms")
-        progress_window.geometry("500x200")
+        progress_window.title("🔄 Retraining Current Students")
+        progress_window.geometry("600x200")
         progress_window.transient(self.root)
         progress_window.grab_set()
         
         # Center the window
         progress_window.update_idletasks()
-        x = (progress_window.winfo_screenwidth() // 2) - (500 // 2)
+        x = (progress_window.winfo_screenwidth() // 2) - (600 // 2)
         y = (progress_window.winfo_screenheight() // 2) - (200 // 2)
-        progress_window.geometry(f"500x200+{x}+{y}")
+        progress_window.geometry(f"600x200+{x}+{y}")
         
-        progress_label = tk.Label(progress_window, text="🔄 Retraining all algorithms with current data...", 
+        progress_label = tk.Label(progress_window, text="🔄 Starting retraining with current students...", 
                                 font=('Arial', 12))
         progress_label.pack(pady=20)
         
@@ -1025,13 +1066,12 @@ RECENT RECORDS (Last 20):
         progress_bar.pack(pady=10, padx=20, fill=tk.X)
         progress_bar.start()
         
-        def run_retrain_evaluation():
+        def run_retrain():
             try:
-                # Update progress
                 progress_window.after(0, lambda: progress_label.config(text="📊 Rebuilding embeddings from database..."))
                 
-                # Rebuild embeddings from database to ensure we have all current data
-                self.system._rebuild_embeddings_from_database()
+                # Rebuild embeddings from database (with memory optimization)
+                self.system._rebuild_embeddings_from_database(max_images_per_person=10)
                 
                 progress_window.after(0, lambda: progress_label.config(text="🔄 Retraining all classifiers..."))
                 
@@ -1052,25 +1092,761 @@ RECENT RECORDS (Last 20):
                     output_to_files=True
                 )
                 
-                # Close progress window
                 progress_window.after(0, progress_window.destroy)
                 
                 if 'error' in results:
                     self.root.after(0, lambda: messagebox.showerror("Error", results['error']))
                     return
                 
-                # Show results in a new window
+                # Show results
                 self.root.after(0, lambda: self.show_retrain_evaluation_results(results))
                 
             except Exception as e:
                 error_msg = str(e)
                 progress_window.after(0, progress_window.destroy)
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Retrain & evaluation failed: {error_msg}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Retraining failed: {error_msg}"))
         
-        # Run retrain evaluation in background thread
+        # Run retraining in background thread
         import threading
-        retrain_thread = threading.Thread(target=run_retrain_evaluation, daemon=True)
+        retrain_thread = threading.Thread(target=run_retrain, daemon=True)
         retrain_thread.start()
+    
+    def generate_performance_charts(self):
+        """Generate performance charts from latest evaluation results"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        # Check if we have evaluation results
+        models_dir = Path('models')
+        csv_files = list(models_dir.glob('algorithm_comparison_*.csv'))
+        
+        if not csv_files:
+            messagebox.showerror("Error", "No evaluation results found!\nPlease run 'Retrain & Evaluate' first.")
+            return
+        
+        # Show progress dialog
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("📊 Generating Performance Charts")
+        progress_window.geometry("400x150")
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        
+        # Center the window
+        progress_window.update_idletasks()
+        x = (progress_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (progress_window.winfo_screenheight() // 2) - (150 // 2)
+        progress_window.geometry(f"400x150+{x}+{y}")
+        
+        progress_label = tk.Label(progress_window, text="📊 Loading evaluation results...", 
+                                font=('Arial', 12))
+        progress_label.pack(pady=20)
+        
+        progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+        progress_bar.pack(pady=10, padx=20, fill=tk.X)
+        progress_bar.start()
+        
+        def generate_charts():
+            try:
+                # Update progress
+                progress_window.after(0, lambda: progress_label.config(text="📊 Creating performance charts..."))
+                
+                # Load latest results
+                latest_csv = max(csv_files, key=lambda x: x.stat().st_mtime)
+                df = pd.read_csv(latest_csv)
+                
+                # Load metadata
+                comprehensive_file = models_dir / 'comprehensive_evaluation_results.json'
+                metadata = {}
+                if comprehensive_file.exists():
+                    with open(comprehensive_file, 'r') as f:
+                        data = json.load(f)
+                        metadata = data.get('training_metadata', {})
+                
+                # Generate charts
+                progress_window.after(0, lambda: progress_label.config(text="📊 Rendering charts..."))
+                
+                # Create the charts
+                fig = self._create_performance_charts(df, metadata)
+                
+                # Close progress window
+                progress_window.after(0, progress_window.destroy)
+                
+                # Show charts in new window
+                self.root.after(0, lambda: self._show_charts_window(fig, df, metadata))
+                
+            except Exception as e:
+                error_msg = str(e)
+                progress_window.after(0, progress_window.destroy)
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Chart generation failed: {error_msg}"))
+        
+        # Run chart generation in background thread
+        import threading
+        chart_thread = threading.Thread(target=generate_charts, daemon=True)
+        chart_thread.start()
+    
+    def _create_performance_charts(self, df, metadata):
+        """Create performance charts (internal method)"""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        import numpy as np
+        
+        # Set style
+        plt.style.use('default')
+        sns.set_palette("husl")
+        
+        # Create figure
+        fig = plt.figure(figsize=(22, 18))
+        
+        # Define colors
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7']
+        
+        # Chart 1: Main Performance Metrics
+        ax1 = plt.subplot(2, 3, 1)
+        metrics = ['accuracy', 'precision', 'recall', 'f1_score']
+        x = np.arange(len(df))
+        width = 0.2
+        
+        for i, metric in enumerate(metrics):
+            values = df[metric] * 100
+            bars = ax1.bar(x + i*width, values, width, 
+                          label=metric.replace('_', ' ').title(), 
+                          color=colors[i], alpha=0.8)
+            
+            # Add value labels
+            for bar in bars:
+                height = bar.get_height()
+                ax1.text(bar.get_x() + bar.get_width()/2., height + 1.0,
+                        f'{height:.1f}%', ha='center', va='bottom', fontsize=8, fontweight='bold')
+        
+        ax1.set_xlabel('Algorithms', fontsize=11, fontweight='bold')
+        ax1.set_ylabel('Performance (%)', fontsize=11, fontweight='bold')
+        ax1.set_title('📊 Algorithm Performance Comparison\n(Main Metrics)', fontsize=12, fontweight='bold')
+        ax1.set_xticks(x + width * 1.5)
+        ax1.set_xticklabels(df['classifier'], fontsize=10, rotation=0)
+        ax1.legend(loc='upper left', fontsize=9, bbox_to_anchor=(0, 1))
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim(0, 105)
+        
+        # Chart 2: Training Time
+        ax2 = plt.subplot(2, 3, 2)
+        training_times = df['training_time'] * 1000
+        bars2 = ax2.bar(df['classifier'], training_times, color=colors[:len(df)], alpha=0.8)
+        
+        for bar in bars2:
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height + 0.2,
+                    f'{height:.1f}ms', ha='center', va='bottom', fontsize=9, fontweight='bold')
+        
+        ax2.set_xlabel('Algorithms', fontsize=11, fontweight='bold')
+        ax2.set_ylabel('Training Time (ms)', fontsize=11, fontweight='bold')
+        ax2.set_title('⚡ Training Time Comparison', fontsize=12, fontweight='bold')
+        ax2.set_xticklabels(df['classifier'], fontsize=10, rotation=0)
+        ax2.grid(True, alpha=0.3)
+        
+        # Chart 3: Inference Speed
+        ax3 = plt.subplot(2, 3, 3)
+        inference_speeds = df['inference_speed']
+        bars3 = ax3.bar(df['classifier'], inference_speeds, color=colors[:len(df)], alpha=0.8)
+        
+        for bar in bars3:
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width()/2., height + 2,
+                    f'{height:.1f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+        
+        ax3.set_xlabel('Algorithms', fontsize=11, fontweight='bold')
+        ax3.set_ylabel('Inference Speed (samples/sec)', fontsize=11, fontweight='bold')
+        ax3.set_title('🚀 Inference Speed Comparison', fontsize=12, fontweight='bold')
+        ax3.set_xticklabels(df['classifier'], fontsize=10, rotation=0)
+        ax3.grid(True, alpha=0.3)
+        
+        # Chart 4: Accuracy Focus
+        ax4 = plt.subplot(2, 3, 4)
+        accuracy_values = df['accuracy'] * 100
+        bars4 = ax4.bar(df['classifier'], accuracy_values, color=colors[:len(df)], alpha=0.8)
+        
+        for bar in bars4:
+            height = bar.get_height()
+            ax4.text(bar.get_x() + bar.get_width()/2., height + 0.3,
+                    f'{height:.1f}%', ha='center', va='bottom', fontsize=10, fontweight='bold')
+        
+        ax4.set_xlabel('Algorithms', fontsize=11, fontweight='bold')
+        ax4.set_ylabel('Accuracy (%)', fontsize=11, fontweight='bold')
+        ax4.set_title('🎯 Accuracy Comparison', fontsize=12, fontweight='bold')
+        ax4.set_xticklabels(df['classifier'], fontsize=10, rotation=0)
+        ax4.grid(True, alpha=0.3)
+        ax4.set_ylim(0, 100)
+        
+        # Chart 5: F1-Score
+        ax5 = plt.subplot(2, 3, 5)
+        f1_values = df['f1_score'] * 100
+        bars5 = ax5.bar(df['classifier'], f1_values, color=colors[:len(df)], alpha=0.8)
+        
+        for bar in bars5:
+            height = bar.get_height()
+            ax5.text(bar.get_x() + bar.get_width()/2., height + 0.3,
+                    f'{height:.1f}%', ha='center', va='bottom', fontsize=10, fontweight='bold')
+        
+        ax5.set_xlabel('Algorithms', fontsize=11, fontweight='bold')
+        ax5.set_ylabel('F1-Score (%)', fontsize=11, fontweight='bold')
+        ax5.set_title('⚖️ F1-Score Comparison', fontsize=12, fontweight='bold')
+        ax5.set_xticklabels(df['classifier'], fontsize=10, rotation=0)
+        ax5.grid(True, alpha=0.3)
+        ax5.set_ylim(0, 100)
+        
+        # Chart 6: Overall Score
+        ax6 = plt.subplot(2, 3, 6)
+        weights = {'accuracy': 0.3, 'precision': 0.25, 'recall': 0.25, 'f1_score': 0.2}
+        overall_scores = []
+        
+        for _, row in df.iterrows():
+            score = sum(row[metric] * weight for metric, weight in weights.items())
+            overall_scores.append(score * 100)
+        
+        bars6 = ax6.bar(df['classifier'], overall_scores, color=colors[:len(df)], alpha=0.8)
+        
+        for bar in bars6:
+            height = bar.get_height()
+            ax6.text(bar.get_x() + bar.get_width()/2., height + 0.3,
+                    f'{height:.1f}%', ha='center', va='bottom', fontsize=10, fontweight='bold')
+        
+        ax6.set_xlabel('Algorithms', fontsize=11, fontweight='bold')
+        ax6.set_ylabel('Overall Score (%)', fontsize=11, fontweight='bold')
+        ax6.set_title('🏆 Overall Performance Score\n(Weighted Average)', fontsize=12, fontweight='bold')
+        ax6.set_xticklabels(df['classifier'], fontsize=10, rotation=0)
+        ax6.grid(True, alpha=0.3)
+        ax6.set_ylim(0, 100)
+        
+        # Add dataset info
+        dataset_info = f"""📊 Dataset: {metadata.get('total_people', 'N/A')} people, {metadata.get('total_embeddings', 'N/A')} embeddings
+🎯 Test Split: 20% (Stratified) | Date: {metadata.get('training_date', 'N/A')}"""
+        
+        fig.text(0.02, 0.02, dataset_info, fontsize=10, 
+                 bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8))
+        
+        # Add best performers
+        best_accuracy = df.loc[df['accuracy'].idxmax()]
+        best_f1 = df.loc[df['f1_score'].idxmax()]
+        fastest = df.loc[df['inference_speed'].idxmax()]
+        
+        summary = f"""🏆 Best: {best_accuracy['classifier']} ({best_accuracy['accuracy']*100:.1f}% acc)
+⚡ Fastest: {fastest['classifier']} ({fastest['inference_speed']:.1f} sps)"""
+        
+        fig.text(0.98, 0.02, summary, fontsize=10, ha='right',
+                 bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8))
+        
+        plt.tight_layout(pad=3.0, h_pad=4.0, w_pad=2.0)
+        plt.subplots_adjust(bottom=0.20, top=0.92, left=0.06, right=0.94, hspace=0.4, wspace=0.3)
+        
+        return fig
+    
+    def _show_charts_window(self, fig, df, metadata):
+        """Show charts in a new window with save options"""
+        # Create new window
+        charts_window = tk.Toplevel(self.root)
+        charts_window.title("📊 Algorithm Performance Charts")
+        charts_window.geometry("1600x1000")
+        
+        # Create notebook for different views
+        notebook = ttk.Notebook(charts_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Tab 1: Charts View
+        charts_frame = ttk.Frame(notebook)
+        notebook.add(charts_frame, text="📊 Performance Charts")
+        
+        # Embed matplotlib figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        canvas = FigureCanvasTkAgg(fig, charts_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Tab 2: Summary Table
+        summary_frame = ttk.Frame(notebook)
+        notebook.add(summary_frame, text="📋 Summary Table")
+        
+        summary_text = scrolledtext.ScrolledText(summary_frame, font=('Courier', 10))
+        summary_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create summary table
+        summary_content = "📊 ALGORITHM PERFORMANCE SUMMARY\n"
+        summary_content += "=" * 80 + "\n\n"
+        
+        # Format dataframe for display
+        display_df = df.copy()
+        for col in ['accuracy', 'precision', 'recall', 'f1_score']:
+            display_df[col] = (display_df[col] * 100).round(2).astype(str) + '%'
+        
+        display_df['training_time'] = (display_df['training_time'] * 1000).round(2).astype(str) + 'ms'
+        display_df['inference_time'] = display_df['inference_time'].round(3).astype(str) + 's'
+        display_df['inference_speed'] = display_df['inference_speed'].round(1).astype(str) + ' sps'
+        
+        summary_content += display_df.to_string(index=False)
+        
+        summary_content += "\n\n🏆 RANKINGS:\n"
+        summary_content += "-" * 40 + "\n"
+        summary_content += f"🥇 Best Accuracy: {df.loc[df['accuracy'].idxmax(), 'classifier']} ({df['accuracy'].max()*100:.2f}%)\n"
+        summary_content += f"🥇 Best Precision: {df.loc[df['precision'].idxmax(), 'classifier']} ({df['precision'].max()*100:.2f}%)\n"
+        summary_content += f"🥇 Best Recall: {df.loc[df['recall'].idxmax(), 'classifier']} ({df['recall'].max()*100:.2f}%)\n"
+        summary_content += f"🥇 Best F1-Score: {df.loc[df['f1_score'].idxmax(), 'classifier']} ({df['f1_score'].max()*100:.2f}%)\n"
+        summary_content += f"⚡ Fastest Training: {df.loc[df['training_time'].idxmin(), 'classifier']} ({df['training_time'].min()*1000:.2f}ms)\n"
+        summary_content += f"🚀 Fastest Inference: {df.loc[df['inference_speed'].idxmax(), 'classifier']} ({df['inference_speed'].max():.1f} samples/sec)\n"
+        
+        summary_content += f"\n📊 DATASET INFORMATION:\n"
+        summary_content += f"• Total People: {metadata.get('total_people', 'N/A')}\n"
+        summary_content += f"• Total Embeddings: {metadata.get('total_embeddings', 'N/A')}\n"
+        summary_content += f"• Max Images per Person: {metadata.get('max_images_per_person', 'N/A')}\n"
+        summary_content += f"• Training Date: {metadata.get('training_date', 'N/A')}\n"
+        
+        summary_text.insert(tk.END, summary_content)
+        
+        # Button frame
+        btn_frame = ttk.Frame(charts_window)
+        btn_frame.pack(pady=10)
+        
+        # Save buttons
+        ttk.Button(btn_frame, text="💾 Save Charts as PNG", 
+                  command=lambda: self._save_charts(fig, 'png')).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(btn_frame, text="📄 Save Charts as PDF", 
+                  command=lambda: self._save_charts(fig, 'pdf')).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(btn_frame, text="✅ Close", 
+                  command=charts_window.destroy).pack(side=tk.LEFT, padx=5)
+    
+    def _save_charts(self, fig, format_type):
+        """Save charts to file"""
+        from tkinter import filedialog
+        from datetime import datetime
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"algorithm_performance_charts_{timestamp}.{format_type}"
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=f".{format_type}",
+            filetypes=[(f"{format_type.upper()} files", f"*.{format_type}")],
+            initialvalue=default_filename
+        )
+        
+        if filename:
+            try:
+                fig.savefig(filename, dpi=300, bbox_inches='tight', 
+                           facecolor='white', edgecolor='none')
+                messagebox.showinfo("Success", f"Charts saved as: {filename}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save charts: {e}")
+    
+    def add_more_students(self):
+        """Add 100 more students to the system"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        # Get current student count
+        current_users = self.system.get_enrolled_users()
+        current_count = len(current_users)
+        
+        # Show confirmation dialog
+        result = messagebox.askyesno(
+            "👥 Add 100 More Students", 
+            f"Current students: {current_count}\n"
+            f"Adding: 100 more students\n"
+            f"Final total: {current_count + 100} students\n\n"
+            f"This will:\n"
+            f"• Add students from Original Images dataset\n"
+            f"• Add students from Faces dataset\n"
+            f"• Add students from LFW dataset if needed\n"
+            f"• Each student will have exactly 10 samples\n"
+            f"• Skip duplicate students (already enrolled)\n"
+            f"• Retrain all classifiers\n\n"
+            f"Continue?"
+        )
+        
+        if not result:
+            return
+        
+        # Show progress dialog
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("👥 Adding 100 More Students")
+        progress_window.geometry("600x200")
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        
+        # Center the window
+        progress_window.update_idletasks()
+        x = (progress_window.winfo_screenwidth() // 2) - (600 // 2)
+        y = (progress_window.winfo_screenheight() // 2) - (200 // 2)
+        progress_window.geometry(f"600x200+{x}+{y}")
+        
+        progress_label = tk.Label(progress_window, text="👥 Adding 100 more students from datasets...", 
+                                font=('Arial', 12))
+        progress_label.pack(pady=20)
+        
+        progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+        progress_bar.pack(pady=10, padx=20, fill=tk.X)
+        progress_bar.start()
+        
+        def run_add_students():
+            try:
+                progress_window.after(0, lambda: progress_label.config(text="📊 Adding students from Original Images..."))
+                
+                # Add 100 more students
+                result = self.system.add_more_students(
+                    add_count=100,
+                    faces_dir='Faces/Faces',
+                    originals_dir='Original Images/Original Images',
+                    lfw_path='lfw-funneled/lfw_funneled',
+                    max_lfw_people=50
+                )
+                
+                progress_window.after(0, progress_window.destroy)
+                
+                # Show results
+                if result['target_reached']:
+                    message = (f"✅ SUCCESS! Added 100 more students!\n\n"
+                             f"📊 Previous students: {result['current']}\n"
+                             f"📈 Students added: {result['added']}\n"
+                             f"📊 Final total: {result['final']}\n\n"
+                             f"All students have been enrolled and system retrained!")
+                else:
+                    message = (f"⚠️ PARTIAL SUCCESS\n\n"
+                             f"📊 Previous students: {result['current']}\n"
+                             f"📈 Students added: {result['added']}\n"
+                             f"📊 Final total: {result['final']}\n\n"
+                             f"Could not add 100 students with available datasets.")
+                
+                self.root.after(0, lambda: messagebox.showinfo("Add Students Complete", message))
+                
+                # Refresh the users list
+                self.root.after(0, self.refresh_users_list)
+                
+            except Exception as e:
+                error_msg = str(e)
+                progress_window.after(0, progress_window.destroy)
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to add students: {error_msg}"))
+        
+        # Run in background thread
+        import threading
+        add_thread = threading.Thread(target=run_add_students, daemon=True)
+        add_thread.start()
+    
+    def show_system_status(self):
+        """Show detailed system status including memory optimization info"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        try:
+            status = self.system.get_system_status()
+            
+            # Create status window
+            status_window = tk.Toplevel(self.root)
+            status_window.title("📊 System Status & Memory Optimization")
+            status_window.geometry("600x500")
+            status_window.transient(self.root)
+            status_window.grab_set()
+            
+            # Center the window
+            status_window.update_idletasks()
+            x = (status_window.winfo_screenwidth() // 2) - (600 // 2)
+            y = (status_window.winfo_screenheight() // 2) - (500 // 2)
+            status_window.geometry(f"600x500+{x}+{y}")
+            
+            # Title
+            tk.Label(status_window, text="📊 System Status & Memory Optimization", 
+                    font=('Arial', 16, 'bold')).pack(pady=10)
+            
+            # Create scrollable text widget
+            text_frame = tk.Frame(status_window)
+            text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+            
+            text_widget = tk.Text(text_frame, wrap=tk.WORD, font=('Consolas', 10))
+            scrollbar = tk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+            text_widget.configure(yscrollcommand=scrollbar.set)
+            
+            text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            # Format status information
+            status_text = f"""
+🎯 SYSTEM OVERVIEW
+{'='*50}
+System Type: {status['system_type']}
+Enrolled Users: {status['enrolled_users']}
+Active Classifiers: {', '.join(status['active_classifiers'])}
+
+📊 DATASET STATISTICS
+{'='*50}
+Total Embeddings in Database: {status['total_embeddings_in_db']}
+Total Embeddings in Memory: {status['total_embeddings']}
+Average Images per Person: {status['avg_images_per_person']}
+Max Images per Person: {status['max_images_per_person']}
+Min Images per Person: {status['min_images_per_person']}
+
+🧠 MEMORY OPTIMIZATION
+{'='*50}
+Memory Optimized: {'✅ YES' if status['memory_optimized'] else '❌ NO'}
+Optimization Status: {'Active (5 images per person limit)' if status['memory_optimized'] else 'Not needed'}
+
+⚙️ SYSTEM SETTINGS
+{'='*50}
+Confidence Threshold: {status['confidence_threshold']}
+Verification Threshold: {status['verification_threshold']}
+
+🔧 PERFORMANCE INFO
+{'='*50}
+"""
+            
+            # Add classifier performance if available
+            if status['classifier_performance']:
+                status_text += "Classifier Performance:\n"
+                for clf_name, perf in status['classifier_performance'].items():
+                    status_text += f"  {clf_name}: {perf.get('accuracy', 'N/A')} accuracy\n"
+            else:
+                status_text += "Classifier Performance: Not available (run evaluation first)\n"
+            
+            # Add recommendations
+            status_text += f"""
+💡 RECOMMENDATIONS
+{'='*50}
+"""
+            
+            if status['total_embeddings_in_db'] > 1000:
+                status_text += "⚠️  Large dataset detected - memory optimization is active\n"
+                status_text += "✅ Training should be faster with optimized dataset\n"
+            else:
+                status_text += "✅ Dataset size is manageable - no optimization needed\n"
+            
+            if status['max_images_per_person'] > 10:
+                status_text += f"⚠️  Some users have {status['max_images_per_person']} images - consider limiting\n"
+            
+            if status['enrolled_users'] < 10:
+                status_text += "💡 Consider adding more users for better model performance\n"
+            
+            # Insert text
+            text_widget.insert(tk.END, status_text)
+            text_widget.config(state=tk.DISABLED)
+            
+            # Buttons
+            btn_frame = tk.Frame(status_window)
+            btn_frame.pack(pady=10)
+            
+            ttk.Button(btn_frame, text="🔄 Refresh Status", 
+                      command=lambda: [status_window.destroy(), self.show_system_status()]).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="❌ Close", 
+                      command=status_window.destroy).pack(side=tk.LEFT, padx=5)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to get system status: {e}")
+    
+    def cleanup_low_samples(self):
+        """Remove students with less than 10 sample images"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        # Get current system status
+        status = self.system.get_system_status()
+        current_students = status['enrolled_users']
+        min_samples = status['min_images_per_person']
+        
+        if current_students == 0:
+            messagebox.showerror("Error", "No enrolled students found!")
+            return
+        
+        # Show configuration dialog
+        config_window = tk.Toplevel(self.root)
+        config_window.title("🧹 Clean Up Low Sample Students")
+        config_window.geometry("500x400")
+        config_window.transient(self.root)
+        config_window.grab_set()
+        
+        # Center the window
+        config_window.update_idletasks()
+        x = (config_window.winfo_screenwidth() // 2) - (500 // 2)
+        y = (config_window.winfo_screenheight() // 2) - (400 // 2)
+        config_window.geometry(f"500x400+{x}+{y}")
+        
+        # Configuration options
+        tk.Label(config_window, text="🧹 Clean Up Low Sample Students", font=('Arial', 16, 'bold')).pack(pady=10)
+        
+        tk.Label(config_window, text=f"Current students: {current_students}", font=('Arial', 12)).pack(pady=5)
+        tk.Label(config_window, text=f"Minimum samples per student: {min_samples}", font=('Arial', 12)).pack(pady=5)
+        
+        tk.Label(config_window, text="\nThis will remove students with insufficient sample images:", font=('Arial', 12)).pack(pady=5)
+        tk.Label(config_window, text="• Students with less than minimum samples will be deleted", font=('Arial', 10)).pack()
+        tk.Label(config_window, text="• System will be retrained with remaining students", font=('Arial', 10)).pack()
+        tk.Label(config_window, text="• This action cannot be undone", font=('Arial', 10, 'bold'), fg='red').pack()
+        
+        # Minimum samples setting
+        tk.Label(config_window, text="\nMinimum Samples Required:", font=('Arial', 12)).pack(pady=5)
+        min_samples_var = tk.StringVar(value="10")
+        min_samples_entry = tk.Entry(config_window, textvariable=min_samples_var, width=20)
+        min_samples_entry.pack(pady=5)
+        tk.Label(config_window, text="(Students with less than this will be removed)", font=('Arial', 9)).pack()
+        
+        # Warning
+        warning_text = """
+⚠️ This action will permanently delete students with insufficient samples
+• Students with less than minimum samples will be removed
+• System will be retrained automatically
+• This cannot be undone
+        """
+        tk.Label(config_window, text=warning_text, font=('Arial', 10), 
+                fg='red', justify='left').pack(pady=10)
+        
+        def start_cleanup():
+            try:
+                min_samples = int(min_samples_var.get())
+                
+                if min_samples < 1:
+                    messagebox.showerror("Error", "Minimum samples must be at least 1!")
+                    return
+                
+                config_window.destroy()
+                self._run_cleanup_low_samples(min_samples)
+                
+            except ValueError:
+                messagebox.showerror("Error", "Please enter a valid number!")
+        
+        # Buttons
+        btn_frame = tk.Frame(config_window)
+        btn_frame.pack(pady=20)
+        
+        ttk.Button(btn_frame, text="🧹 Start Cleanup", 
+                  command=start_cleanup).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="❌ Cancel", 
+                  command=config_window.destroy).pack(side=tk.LEFT, padx=10)
+    
+    def _run_cleanup_low_samples(self, min_samples):
+        """Run cleanup of low sample students in background"""
+        # Show progress dialog
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("🧹 Cleaning Up Low Sample Students")
+        progress_window.geometry("600x200")
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        
+        # Center the window
+        progress_window.update_idletasks()
+        x = (progress_window.winfo_screenwidth() // 2) - (600 // 2)
+        y = (progress_window.winfo_screenheight() // 2) - (200 // 2)
+        progress_window.geometry(f"600x200+{x}+{y}")
+        
+        progress_label = tk.Label(progress_window, text="🧹 Starting cleanup of low sample students...", 
+                                font=('Arial', 12))
+        progress_label.pack(pady=20)
+        
+        progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+        progress_bar.pack(pady=10, padx=20, fill=tk.X)
+        progress_bar.start()
+        
+        def run_cleanup():
+            try:
+                progress_window.after(0, lambda: progress_label.config(text="🔍 Checking students for minimum samples..."))
+                
+                # Remove students with insufficient samples
+                results = self.system.remove_students_with_insufficient_samples(min_samples)
+                
+                progress_window.after(0, progress_window.destroy)
+                
+                if 'error' in results:
+                    self.root.after(0, lambda: messagebox.showerror("Error", results['error']))
+                    return
+                
+                # Show results
+                self.root.after(0, lambda: self.show_cleanup_results(results))
+                
+            except Exception as e:
+                error_msg = str(e)
+                progress_window.after(0, progress_window.destroy)
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Cleanup failed: {error_msg}"))
+        
+        # Run cleanup in background thread
+        import threading
+        cleanup_thread = threading.Thread(target=run_cleanup, daemon=True)
+        cleanup_thread.start()
+    
+    def show_cleanup_results(self, results):
+        """Display cleanup results"""
+        # Create new window for results
+        results_window = tk.Toplevel(self.root)
+        results_window.title("🧹 Cleanup Results")
+        results_window.geometry("800x600")
+        results_window.transient(self.root)
+        results_window.grab_set()
+        
+        # Center the window
+        results_window.update_idletasks()
+        x = (results_window.winfo_screenwidth() // 2) - (800 // 2)
+        y = (results_window.winfo_screenheight() // 2) - (600 // 2)
+        results_window.geometry(f"800x600+{x}+{y}")
+        
+        # Title
+        title_label = tk.Label(results_window, text="🧹 Cleanup Results", 
+                             font=('Arial', 16, 'bold'))
+        title_label.pack(pady=10)
+        
+        # Summary
+        summary_text = f"""
+Cleanup Summary:
+• Minimum samples required: {results['min_samples']}
+• Students removed: {results['removed_count']}
+• Students kept: {results['kept_count']}
+• Total students before: {results['removed_count'] + results['kept_count']}
+• Total students after: {results['kept_count']}
+        """
+        
+        summary_label = tk.Label(results_window, text=summary_text, 
+                               font=('Arial', 12), justify='left')
+        summary_label.pack(pady=10, padx=20)
+        
+        # Create notebook for detailed results
+        notebook = ttk.Notebook(results_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Removed students tab
+        if results['removed_students']:
+            removed_frame = ttk.Frame(notebook)
+            notebook.add(removed_frame, text=f"Removed Students ({results['removed_count']})")
+            
+            removed_text = tk.Text(removed_frame, wrap=tk.WORD, height=15)
+            removed_scrollbar = ttk.Scrollbar(removed_frame, orient=tk.VERTICAL, command=removed_text.yview)
+            removed_text.configure(yscrollcommand=removed_scrollbar.set)
+            
+            removed_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            removed_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            removed_content = "Removed Students:\n" + "="*50 + "\n"
+            for student in results['removed_students']:
+                removed_content += f"• {student['name']}: {student['samples']} samples\n"
+            
+            removed_text.insert(tk.END, removed_content)
+            removed_text.config(state=tk.DISABLED)
+        
+        # Kept students tab
+        if results['kept_students']:
+            kept_frame = ttk.Frame(notebook)
+            notebook.add(kept_frame, text=f"Kept Students ({results['kept_count']})")
+            
+            kept_text = tk.Text(kept_frame, wrap=tk.WORD, height=15)
+            kept_scrollbar = ttk.Scrollbar(kept_frame, orient=tk.VERTICAL, command=kept_text.yview)
+            kept_text.configure(yscrollcommand=kept_scrollbar.set)
+            
+            kept_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            kept_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            kept_content = "Kept Students:\n" + "="*50 + "\n"
+            for student in results['kept_students']:
+                kept_content += f"• {student['name']}: {student['samples']} samples\n"
+            
+            kept_text.insert(tk.END, kept_content)
+            kept_text.config(state=tk.DISABLED)
+        
+        # Close button
+        close_btn = ttk.Button(results_window, text="✅ Close", 
+                             command=results_window.destroy)
+        close_btn.pack(pady=10)
     
     def show_retrain_evaluation_results(self, results):
         """Display retrain evaluation results with enhanced information"""

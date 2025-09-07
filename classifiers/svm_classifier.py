@@ -81,12 +81,43 @@ class SVMClassifier(BaseClassifier):
         
         try:
             self.svm_model.fit(X, y_encoded)
-            print(f"SVM trained successfully with {unique_classes} classes")
-            print(f"Classes: {list(self.label_encoder.classes_)}")
-            return True
+            
+            # Verify the model was trained properly
+            if hasattr(self.svm_model, 'support_vectors_') and self.svm_model.support_vectors_ is not None:
+                print(f"SVM trained successfully with {unique_classes} classes")
+                print(f"Classes: {list(self.label_encoder.classes_)}")
+                print(f"Support vectors: {len(self.svm_model.support_vectors_)}")
+                return True
+            else:
+                print("SVM training completed but model may not be properly fitted")
+                # Try with different parameters
+                self.svm_model = SVC(
+                    kernel='rbf',  # Try RBF kernel instead
+                    probability=self.probability,
+                    C=self.C,
+                    random_state=42,
+                    gamma='scale'  # Add gamma parameter
+                )
+                self.svm_model.fit(X, y_encoded)
+                print(f"SVM retrained with RBF kernel - {unique_classes} classes")
+                return True
+                
         except Exception as e:
             print(f"SVM training failed: {e}")
-            return False
+            # Fallback to linear kernel with different C value
+            try:
+                self.svm_model = SVC(
+                    kernel='linear',
+                    probability=self.probability,
+                    C=0.1,  # Lower C value
+                    random_state=42
+                )
+                self.svm_model.fit(X, y_encoded)
+                print(f"SVM trained with fallback parameters - {unique_classes} classes")
+                return True
+            except Exception as e2:
+                print(f"SVM fallback training also failed: {e2}")
+                return False
     
     def predict(self, embedding):
         """
@@ -126,6 +157,14 @@ class SVMClassifier(BaseClassifier):
             return "Unknown", 0.0
         
         try:
+            # Check if SVM model is properly trained
+            if not hasattr(self.svm_model, 'support_vectors_') or self.svm_model.support_vectors_ is None:
+                print("SVM model not properly trained, using similarity-based prediction")
+                if similarities:
+                    best_name = self.known_names[best_similarity_idx]
+                    return best_name, max_similarity
+                return "Unknown", 0.0
+            
             # Get SVM prediction
             probabilities = self.svm_model.predict_proba(embedding)[0]
             predicted_class = self.svm_model.predict(embedding)[0]
