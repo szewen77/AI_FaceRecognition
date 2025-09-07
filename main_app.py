@@ -206,18 +206,18 @@ class FaceRecognitionGUI:
         
         # Instructions
         instructions = """
-Live Attendance Instructions:
+User-Friendly Live Attendance Instructions:
 • Ensure good lighting conditions
 • Position camera at eye level
-• Multiple people can be recognized simultaneously
-• Attendance is automatically marked (once per day per person)
-• Debug information will appear in the log below
+• Look at the camera - attendance will be marked automatically
+• A success popup will appear when attendance is marked
+• Camera window stays open for continuous monitoring
+• 3-second cooldown prevents duplicate markings
 
 Camera Controls (when live window is active):
-• Press 'q' to quit
-• Press 's' to save screenshot
-• Press 'p' to print performance report
-• Press 'd' to toggle debug mode
+• Press 'q' to quit manually
+• Clean interface without flickering text
+• Multi-classifier system for accurate recognition
         """
         
         instr_frame = ttk.LabelFrame(attendance_frame, text="Instructions", padding=10)
@@ -649,9 +649,10 @@ Camera Controls (when live window is active):
         
         def attendance_worker():
             try:
-                self.log_to_attendance("🎥 Starting live attendance monitoring...")
+                self.log_to_attendance("🎥 Starting user-friendly live attendance...")
                 self.log_to_attendance("📊 Multi-classifier system active")
-                self.log_to_attendance("🎮 Camera controls: 'q'=quit, 's'=screenshot, 'p'=performance, 'd'=debug")
+                self.log_to_attendance("💡 Look at the camera - attendance will be marked automatically")
+                self.log_to_attendance("🎮 Camera window stays open - press 'q' to quit")
                 
                 self.system.run_live_attendance()
                 
@@ -1187,6 +1188,8 @@ RECENT RECORDS (Last 20):
     
     def _create_performance_charts(self, df, metadata):
         """Create performance charts (internal method)"""
+        import matplotlib
+        matplotlib.use('Agg')  # Use non-interactive backend to avoid threading issues
         import matplotlib.pyplot as plt
         import seaborn as sns
         import numpy as np
@@ -1340,26 +1343,102 @@ RECENT RECORDS (Last 20):
         
         return fig
     
+    def _show_summary_only(self, df, metadata):
+        """Show only summary table when charts fail"""
+        try:
+            # Create simple summary window
+            summary_window = tk.Toplevel(self.root)
+            summary_window.title("📊 Algorithm Performance Summary")
+            summary_window.geometry("800x600")
+            
+            summary_text = scrolledtext.ScrolledText(summary_window, font=('Courier', 10))
+            summary_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Create summary content
+            summary_content = "📊 ALGORITHM PERFORMANCE SUMMARY\n"
+            summary_content += "=" * 80 + "\n\n"
+            
+            for _, row in df.iterrows():
+                summary_content += f"🔹 {row['classifier']}\n"
+                summary_content += f"   Accuracy: {row['accuracy']*100:.2f}%\n"
+                summary_content += f"   Precision: {row['precision']*100:.2f}%\n"
+                summary_content += f"   Recall: {row['recall']*100:.2f}%\n"
+                summary_content += f"   F1-Score: {row['f1_score']*100:.2f}%\n"
+                summary_content += f"   Training Time: {row['training_time']*1000:.2f}ms\n"
+                summary_content += f"   Inference Time: {row['inference_time']*1000:.2f}ms\n"
+                summary_content += f"   Inference Speed: {row['inference_speed']:.1f} faces/sec\n\n"
+            
+            summary_content += f"\n📈 Dataset Info:\n"
+            summary_content += f"   Total Samples: {metadata.get('total_samples', 'N/A')}\n"
+            summary_content += f"   Total People: {metadata.get('total_people', 'N/A')}\n"
+            summary_content += f"   Train/Test Split: {metadata.get('test_size', 'N/A')}\n"
+            summary_content += f"   Evaluation Date: {metadata.get('evaluation_date', 'N/A')}\n"
+            
+            summary_text.insert(tk.END, summary_content)
+            summary_text.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            print(f"Summary display error: {e}")
+            messagebox.showerror("Error", f"Failed to display performance summary: {e}")
+    
     def _show_charts_window(self, fig, df, metadata):
         """Show charts in a new window with save options"""
-        # Create new window
-        charts_window = tk.Toplevel(self.root)
-        charts_window.title("📊 Algorithm Performance Charts")
-        charts_window.geometry("1600x1000")
-        
-        # Create notebook for different views
-        notebook = ttk.Notebook(charts_window)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Tab 1: Charts View
-        charts_frame = ttk.Frame(notebook)
-        notebook.add(charts_frame, text="📊 Performance Charts")
-        
-        # Embed matplotlib figure
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        canvas = FigureCanvasTkAgg(fig, charts_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        try:
+            # Create new window
+            charts_window = tk.Toplevel(self.root)
+            charts_window.title("📊 Algorithm Performance Charts")
+            charts_window.geometry("1600x1000")
+            
+            # Create notebook for different views
+            notebook = ttk.Notebook(charts_window)
+            notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Tab 1: Charts View
+            charts_frame = ttk.Frame(notebook)
+            notebook.add(charts_frame, text="📊 Performance Charts")
+            
+            # Save chart as image and display it (safer approach)
+            import tempfile
+            import os
+            from PIL import Image, ImageTk
+            
+            # Save figure to temporary file
+            temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            fig.savefig(temp_file.name, dpi=100, bbox_inches='tight')
+            temp_file.close()
+            
+            # Load and display image
+            img = Image.open(temp_file.name)
+            img = img.resize((1400, 800), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            
+            # Create label to display image
+            img_label = tk.Label(charts_frame, image=photo)
+            img_label.image = photo  # Keep a reference
+            img_label.pack(fill=tk.BOTH, expand=True)
+            
+            # Clean up temp file
+            try:
+                os.unlink(temp_file.name)
+            except:
+                pass
+            
+            # Handle window close properly
+            def on_closing():
+                try:
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+                    charts_window.destroy()
+                except:
+                    pass
+            
+            charts_window.protocol("WM_DELETE_WINDOW", on_closing)
+            
+        except Exception as e:
+            print(f"Chart display error: {e}")
+            # Fallback: just show the summary table
+            self._show_summary_only(df, metadata)
+            return
         
         # Tab 2: Summary Table
         summary_frame = ttk.Frame(notebook)

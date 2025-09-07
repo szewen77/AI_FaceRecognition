@@ -1989,17 +1989,20 @@ class FixedMultiClassifierSystem:
         return False
     
     def run_live_attendance(self):
-        """Run live attendance with multi-classifier voting"""
-        print(f"🎥 Starting Multi-Classifier Live Attendance...")
+        """Run live attendance with user-friendly popup messages"""
+        print(f"🎥 Starting User-Friendly Live Attendance...")
         print(f"📊 Active classifiers: {list(self.classifiers.keys())}")
         print(f"🗳️  Using majority voting for final decisions")
-        print("Controls: 'q'=quit, 's'=screenshot, 'p'=performance report, 'd'=debug mode")
+        print("Press 'q' to quit, or wait for successful attendance marking")
     
         cap = cv2.VideoCapture(0)
         frame_count = 0
         detected_count = 0
         recognized_count = 0
-        debug_mode = False
+        attendance_marked_count = 0
+        last_attendance_time = 0
+        attendance_cooldown = 3  # 3 seconds cooldown between attendance markings
+        should_exit = False  # Flag to control exit
     
         # Check if system is ready
         if len(self.known_embeddings) == 0:
@@ -2007,20 +2010,25 @@ class FixedMultiClassifierSystem:
             cap.release()
             return
     
-        while True:
+        # Create a simple, clean window (keep original size)
+        cv2.namedWindow('Multi-Classifier Attendance', cv2.WINDOW_NORMAL)
+    
+        while not should_exit:
             ret, frame = cap.read()
             if not ret:
                 break
         
-            # Process every 10th frame for performance
+            # Process every 5th frame for better performance
             frame_count += 1
-            if frame_count % 10 != 0:
+            if frame_count % 5 != 0:
+                # Show simple frame without processing
                 cv2.imshow('Multi-Classifier Attendance', frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
+                    should_exit = True
                     break
                 continue
         
-            # Create display frame
+            # Create clean display frame
             display_frame = frame.copy()
         
             # Detect faces
@@ -2033,71 +2041,53 @@ class FixedMultiClassifierSystem:
                     x1, y1, x2, y2 = map(int, box)
                 
                     # Extract face for recognition
-                    # Validate bounding box coordinates
                     if x1 >= x2 or y1 >= y2:
-                        continue  # Skip invalid bounding box
+                        continue
                         
                     face_crop = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
                 
-                    # Validate face crop dimensions
                     if face_crop.size > 0 and face_crop.shape[0] > 20 and face_crop.shape[1] > 20:
                         # Get embedding
                         embedding = self.extractor.extract_face_embedding(face_crop)
                     
                         if embedding is not None:
                             # Multi-classifier prediction with voting
-                            predicted_name, confidence, individual_results, voting_details = self.predict_with_voting(embedding, debug=debug_mode)
+                            predicted_name, confidence, individual_results, voting_details = self.predict_with_voting(embedding, debug=False)
                         
-                            attendance_marked = False
-                        
+                            current_time = time.time()
+                            
                             if predicted_name != "Unknown" and confidence >= self.confidence_threshold:
-                                # Only show name if both recognized AND confident enough
-                                color = (0, 255, 0)  # Green - confident recognition
-                                recognized_count += 1
-                                message, attendance_marked = self.mark_attendance_with_tracking(predicted_name, confidence, individual_results, voting_details)
-                                display_name = predicted_name
-                                display_confidence = confidence
+                                # Check cooldown to avoid multiple markings
+                                if current_time - last_attendance_time > attendance_cooldown:
+                                    recognized_count += 1
+                                    message, attendance_marked = self.mark_attendance_with_tracking(predicted_name, confidence, individual_results, voting_details)
+                                    
+                                    if attendance_marked:
+                                        attendance_marked_count += 1
+                                        last_attendance_time = current_time
+                                        
+                                        # Show success popup (keep camera window open)
+                                        self._show_attendance_success_popup(predicted_name, confidence, message)
+                                        
+                                        print(f"✅ Attendance marked for {predicted_name} (confidence: {confidence:.2f})")
+                                        print(f"📊 Total attendance marked: {attendance_marked_count}")
+                                
+                                # Draw green rectangle for recognized face
+                                cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+                                label = f"{predicted_name} ({confidence:.2f})"
+                                cv2.putText(display_frame, label, (x1, y1-10), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                             else:
-                                # Low confidence or no recognition = treat as Unknown
-                                color = (0, 0, 255)  # Red - unknown
-                                display_name = "Unknown"
-                                display_confidence = 0.0
-                        
-                            # Draw rectangle and label
-                            cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-                            label = f"{display_name} ({display_confidence:.2f})"
-                            cv2.putText(display_frame, label, (x1, y1-10), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                        
-                            # Show voting details only for recognized faces
-                            if predicted_name != "Unknown" and confidence >= self.confidence_threshold:
-                                vote_text = f"Votes: {voting_details['votes'].get(predicted_name, 0)}/3"
-                                cv2.putText(display_frame, vote_text, (x1, y2+20),cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-                            
-                                if attendance_marked:
-                                    status_text = "✓ MARKED"
-                                    cv2.putText(display_frame, status_text, (x1, y2+40),cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
-                        
-                            # Debug mode shows actual predictions even when displayed as Unknown
-                            if debug_mode and (predicted_name != "Unknown" or confidence > 0):
-                                y_offset = y2 + 60
-                                if predicted_name != "Unknown":
-                                    cv2.putText(display_frame, f"ACTUAL: {predicted_name} ({confidence:.2f})", (x1, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 0), 1)
-                                    y_offset += 15
-                            
-                                for clf_name, result in individual_results.items():
-                                    detail_text = f"{clf_name}: {result['name']}({result['confidence']:.2f})"
-                                    cv2.putText(display_frame, detail_text, (x1, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                                    y_offset += 15
+                                # Draw red rectangle for unknown face
+                                cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                                cv2.putText(display_frame, "Unknown", (x1, y1-10), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         
-            # Add system info
-            unique_people = len(set(self.known_names)) if self.known_names else 0
-            cv2.putText(display_frame, f"Multi-Classifier System | {unique_people} enrolled",(10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(display_frame, f"Detected: {detected_count} | Recognized: {recognized_count}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(display_frame, f"Frame: {frame_count} | Threshold: {self.confidence_threshold:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-        
-            if debug_mode:
-                cv2.putText(display_frame, "DEBUG MODE ON - Shows actual predictions", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            # Add simple status info
+            cv2.putText(display_frame, "Live Attendance - Look at the camera", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            cv2.putText(display_frame, f"Press 'q' to quit", (10, 60), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
         
             # Display frame
             cv2.imshow('Multi-Classifier Attendance', display_frame)
@@ -2105,19 +2095,8 @@ class FixedMultiClassifierSystem:
             # Handle key presses
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
+                should_exit = True
                 break
-            elif key == ord('s'):
-                # Save screenshot
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                cv2.imwrite(f"screenshot_{timestamp}.jpg", display_frame)
-                print(f"📸 Screenshot saved: screenshot_{timestamp}.jpg")
-            elif key == ord('p'):
-                # Print performance report
-                print(self.get_classifier_performance_report())
-            elif key == ord('d'):
-                # Toggle debug mode
-                debug_mode = not debug_mode
-                print(f"🔍 Debug mode: {'ON' if debug_mode else 'OFF'}")
     
         cap.release()
         cv2.destroyAllWindows()
@@ -2125,8 +2104,43 @@ class FixedMultiClassifierSystem:
         print(f"Frames processed: {frame_count}")
         print(f"Faces detected: {detected_count}")
         print(f"Faces recognized: {recognized_count}")
+        print(f"Attendance marked: {attendance_marked_count}")
         if detected_count > 0:
             print(f"Recognition rate: {(recognized_count/detected_count)*100:.1f}%")
+    
+    def _show_attendance_success_popup(self, name, confidence, message):
+        """Show a success popup when attendance is marked"""
+        import tkinter as tk
+        from tkinter import messagebox
+        
+        try:
+            # Create a temporary root window for the popup
+            root = tk.Tk()
+            root.withdraw()  # Hide the main window
+            root.attributes('-topmost', True)  # Make sure popup appears on top
+            
+            # Center the popup on screen
+            root.update_idletasks()
+            x = (root.winfo_screenwidth() // 2) - 200
+            y = (root.winfo_screenheight() // 2) - 100
+            root.geometry(f"400x200+{x}+{y}")
+            
+            # Show success message
+            success_msg = f"✅ Attendance Marked Successfully!\n\n"
+            success_msg += f"👤 Name: {name}\n"
+            success_msg += f"🎯 Confidence: {confidence:.2f}\n"
+            success_msg += f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            success_msg += f"📝 Details: {message}"
+            
+            messagebox.showinfo("Attendance Success", success_msg)
+            
+            # Clean up
+            root.destroy()
+            
+        except Exception as e:
+            print(f"Popup error: {e}")
+            # Fallback: just print the success message
+            print(f"✅ Attendance marked for {name} (confidence: {confidence:.2f})")
     
         
             
