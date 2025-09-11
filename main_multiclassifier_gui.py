@@ -139,6 +139,13 @@ class FaceRecognitionGUI:
                                  activebackground='#bb6bd9', cursor='hand2')
         compare_button.pack(fill='x', pady=5)
         
+        # Kaggle dataset enrollment button
+        kaggle_button = tk.Button(button_frame, text="🔗 Enroll Kaggle Dataset", 
+                                command=self.enroll_kaggle_dataset,
+                                font=('Arial', 11, 'bold'), bg='#e67e22', fg='white',
+                                activebackground='#f39c12', cursor='hand2')
+        kaggle_button.pack(fill='x', pady=5)
+        
         # Right panel - Logs and status
         right_frame = tk.LabelFrame(main_frame, text="System Logs", 
                                    font=('Arial', 12, 'bold'), bg='#f0f0f0', fg='#2c3e50')
@@ -511,6 +518,65 @@ class FaceRecognitionGUI:
             
         except Exception as e:
             self.log_message(f"Comparison failed: {e}", "ERROR")
+    
+    def enroll_kaggle_dataset(self):
+        """Enroll students from Kaggle dataset"""
+        try:
+            self.log_message("Starting Kaggle dataset enrollment...", "INFO")
+            
+            # Use default parameters for simplicity in this GUI
+            dataset_name = "vasukipatel/face-recognition-dataset"
+            max_people = 25
+            max_images_per_person = 15
+            
+            self.log_message(f"Dataset: {dataset_name}", "INFO")
+            self.log_message(f"Max people: {max_people}", "INFO")
+            self.log_message(f"Max images per person: {max_images_per_person}", "INFO")
+            self.log_message("This may take several minutes...", "WARNING")
+            
+            # Use threading to prevent GUI freeze
+            def kaggle_thread():
+                try:
+                    result = self.system.enroll_from_kaggle_dataset(
+                        dataset_name=dataset_name,
+                        max_people=max_people,
+                        max_images_per_person=max_images_per_person,
+                        kaggle_folder="KaggleDatasets"
+                    )
+                    
+                    if result["success"]:
+                        enrolled_count = result["enrolled_count"]
+                        self.log_message(f"✅ Successfully enrolled {enrolled_count} people from Kaggle dataset!", "SUCCESS")
+                        
+                        # Show dataset info
+                        if "dataset_info" in result:
+                            dataset_info = result["dataset_info"]
+                            self.log_message(f"📊 Dataset: {dataset_info.get('total_files', 0)} files, {dataset_info.get('image_files', 0)} images", "INFO")
+                        
+                        if "organized_info" in result:
+                            org_info = result["organized_info"]
+                            self.log_message(f"🎯 Processed: {org_info.get('people_processed', 0)} people, {org_info.get('images_processed', 0)} images", "INFO")
+                        
+                        self.log_message("All classifiers retrained with new data", "SUCCESS")
+                        
+                        # Update status
+                        enrolled_count = len(set(self.system.known_names)) if self.system.known_names else 0
+                        self.enrolled_label.config(text=f"Enrolled: {enrolled_count} people")
+                        
+                    else:
+                        error_msg = result.get("error", "Unknown error")
+                        self.log_message(f"❌ Kaggle enrollment failed: {error_msg}", "ERROR")
+                        
+                        if "kagglehub" in error_msg.lower():
+                            self.log_message("Please install: pip install kagglehub", "WARNING")
+                        
+                except Exception as e:
+                    self.log_message(f"❌ Kaggle enrollment error: {e}", "ERROR")
+            
+            threading.Thread(target=kaggle_thread, daemon=True).start()
+            
+        except Exception as e:
+            self.log_message(f"Failed to start Kaggle enrollment: {e}", "ERROR")
     
     def on_closing(self):
         """Handle window closing"""

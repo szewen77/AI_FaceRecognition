@@ -1149,9 +1149,10 @@ class FixedMultiClassifierSystem:
             
             # Enroll each person with limited samples
             for person_name, files in people_files.items():
-                # Check for duplicates if existing_names is provided
+                # Check for duplicates within this run only (not database)
+                # Let enroll_from_file_list handle existing database users properly
                 if existing_names is not None and person_name in existing_names:
-                    print(f"⏭️  Skipping {person_name}: already exists")
+                    print(f"⏭️  Skipping {person_name}: already processed in this run")
                     continue
                 
                 try:
@@ -1209,138 +1210,97 @@ class FixedMultiClassifierSystem:
         
         return people_count
     
-    def add_more_students(self, add_count=100, faces_dir='Faces/Faces', 
-                         originals_dir='Original Images/Original Images',
-                         lfw_path='lfw-funneled/lfw_funneled', max_lfw_people=50):
+    
+    def enroll_from_kaggle_dataset(self, dataset_name="vasukipatel/face-recognition-dataset", 
+                                  max_people=50, max_images_per_person=15, 
+                                  min_images_per_person=2, kaggle_folder="KaggleDatasets"):
         """
-        Add more students from datasets (default 100 more students)
+        Enroll students from Kaggle face recognition dataset
         
         Args:
-            add_count: Number of additional students to add
-            faces_dir: Path to Faces dataset
-            originals_dir: Path to Original Images dataset  
-            lfw_path: Path to LFW dataset
-            max_lfw_people: Maximum LFW people to add
+            dataset_name: Kaggle dataset identifier
+            max_people: Maximum number of people to enroll
+            max_images_per_person: Maximum images per person
+            min_images_per_person: Minimum images required per person (skip people with fewer)
+            kaggle_folder: Local folder to store organized dataset
+            
+        Returns:
+            Dictionary with enrollment results
         """
-        # Get current count and existing names
-        current_users = self.database.get_enrolled_users()
-        current_count = len(current_users)
-        existing_names = set(current_users['name'].tolist())
-        
-        print(f"📊 Current students: {current_count}")
-        print(f"🎯 Adding {add_count} more students")
-        print(f"📈 Final target: {current_count + add_count} students")
-        
-        needed = add_count
-        print(f"📈 Need to add: {needed} more students")
-        
-        added_count = 0
-        
-        # 1. Try to add from Original Images dataset first (your custom data)
-        if needed > 0:
-            print(f"\n1️⃣ Adding from Original Images dataset...")
-            originals_added = self._enroll_from_directory(originals_dir, prefix="Student_", 
-                                                        max_samples_per_person=10, 
-                                                        existing_names=existing_names)
-            added_count += originals_added
-            needed -= originals_added
-            print(f"✅ Added {originals_added} students from Original Images")
-        
-        # 2. Try to add from Faces dataset
-        if needed > 0:
-            print(f"\n2️⃣ Adding from Faces dataset...")
-            faces_added = self._enroll_from_directory(faces_dir, prefix="Student_", 
-                                                    max_samples_per_person=10,
-                                                    existing_names=existing_names)
-            added_count += faces_added
-            needed -= faces_added
-            print(f"✅ Added {faces_added} students from Faces")
-        
-        # 3. Add from LFW dataset if still needed
-        if needed > 0:
-            print(f"\n3️⃣ Adding from LFW dataset...")
-            lfw_added = self._enroll_from_lfw_subset(lfw_path, max_people=min(needed, max_lfw_people),
-                                                   max_samples_per_person=10, existing_names=existing_names)
-            added_count += lfw_added
-            needed -= lfw_added
-            print(f"✅ Added {lfw_added} students from LFW")
-        
-        # Rebuild embeddings and retrain
-        if added_count > 0:
-            print(f"\n🔄 Rebuilding embeddings and retraining...")
-            self._rebuild_embeddings_from_database()
-            self._update_all_classifiers_with_new_data()
-            self.save_system()
-        
-        final_count = len(self.database.get_enrolled_users())
-        
-        print(f"\n🎯 FINAL RESULT:")
-        print(f"📊 Total students: {final_count}")
-        print(f"📈 Students added: {added_count}")
-        print(f"✅ Target reached: {'Yes' if added_count >= add_count else 'No'}")
-        
-        return {
-            "current": current_count,
-            "added": added_count,
-            "final": final_count,
-            "target_reached": added_count >= add_count
-        }
-    
-    def _enroll_from_lfw_subset(self, lfw_path, max_people=50, max_samples_per_person=10, existing_names=None):
-        """Enroll a subset of people from LFW dataset with limited samples per person and duplicate checking"""
-        lfw_dir = Path(lfw_path)
-        if not lfw_dir.exists():
-            print(f"LFW dataset not found at: {lfw_path}")
-            return 0
-        
-        # Get all person directories
-        person_dirs = [d for d in lfw_dir.iterdir() if d.is_dir()]
-        
-        # Limit to max_people
-        person_dirs = person_dirs[:max_people]
-        
-        enrolled_count = 0
-        
-        for person_dir in person_dirs:
-            person_name = f"Student_LFW_{person_dir.name}"
+        try:
+            # Import the integrator
+            from kaggle_dataset_integration import KaggleFaceDatasetIntegrator
             
-            # Check for duplicates if existing_names is provided
-            if existing_names is not None and person_name in existing_names:
-                print(f"⏭️  Skipping {person_name}: already exists")
-                continue
+            print(f"🔄 Starting Kaggle dataset enrollment...")
+            print(f"📦 Dataset: {dataset_name}")
+            print(f"👥 Max people: {max_people}")
+            print(f"🖼️  Max images per person: {max_images_per_person}")
+            print(f"📊 Min images per person: {min_images_per_person}")
             
-            # Get all images for this person
-            all_image_files = [f for f in person_dir.iterdir() 
-                             if f.suffix.lower() in {'.jpg', '.jpeg', '.png', '.bmp'}]
+            # Initialize integrator with main folder
+            integrator = KaggleFaceDatasetIntegrator(
+                target_folder=kaggle_folder,
+                max_people=max_people,
+                max_images_per_person=max_images_per_person,
+                min_images_per_person=min_images_per_person
+            )
             
-            if len(all_image_files) == 0:
-                continue
+            # Download and prepare dataset
+            result = integrator.download_and_prepare_dataset(dataset_name)
             
-            # Limit to max_samples_per_person
-            if len(all_image_files) > max_samples_per_person:
-                import random
-                image_files = random.sample(all_image_files, max_samples_per_person)
-                print(f"📊 {person_name}: {len(image_files)} samples (limited from {len(all_image_files)})")
-            else:
-                image_files = all_image_files
-                print(f"📊 {person_name}: {len(image_files)} samples")
+            if not result["success"]:
+                print(f"❌ Failed to download/prepare Kaggle dataset: {result.get('error', 'Unknown error')}")
+                return {
+                    "success": False,
+                    "error": result.get('error', 'Unknown error'),
+                    "enrolled_count": 0
+                }
             
-            try:
-                self.enrollment_system.enroll_from_file_list(person_name, [str(f) for f in image_files])
-                enrolled_count += 1
-                
-                # Add to existing_names to avoid duplicates in same run
-                if existing_names is not None:
-                    existing_names.add(person_name)
-                
-                if enrolled_count % 10 == 0:
-                    print(f"📸 Processed {enrolled_count} LFW students...")
-                    
-            except Exception as e:
-                print(f"⚠️  Error processing {person_name}: {e}")
-                continue
-        
-        return enrolled_count
+            print(f"✅ Dataset downloaded and organized successfully!")
+            print(f"📁 Location: {result['organized_path']}")
+            
+            # Enroll from organized dataset (use the specific dataset folder)
+            # Let the enrollment functions handle duplicate checking and sample addition
+            dataset_folder = result["organized_path"]
+            enrolled_count = self._enroll_from_directory(
+                dataset_folder, 
+                prefix="Kaggle_", 
+                max_samples_per_person=max_images_per_person,
+                existing_names=None  # Don't skip existing users - let enrollment functions handle them
+            )
+            
+            if enrolled_count > 0:
+                print(f"\n🔄 Rebuilding embeddings and retraining classifiers...")
+                self._rebuild_embeddings_from_database()
+                self._update_all_classifiers_with_new_data()
+                self.save_system()
+                print(f"✅ System retrained with {enrolled_count} new people from Kaggle dataset")
+            
+            return {
+                "success": True,
+                "enrolled_count": enrolled_count,
+                "dataset_info": result.get("dataset_info", {}),
+                "organized_info": result.get("organized_info", {}),
+                "organized_path": result["organized_path"]
+            }
+            
+        except ImportError:
+            error_msg = "Kaggle dataset integration not available. Please install: pip install kagglehub"
+            print(f"❌ {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "enrolled_count": 0
+            }
+        except Exception as e:
+            error_msg = f"Error enrolling from Kaggle dataset: {e}"
+            print(f"❌ {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "enrolled_count": 0
+            }
+
 
     def predict_with_voting(self, embedding, debug=False):
         """
@@ -1468,7 +1428,7 @@ class FixedMultiClassifierSystem:
         
         return report
     
-    def comprehensive_classifier_evaluation(self, test_size=0.3, cv_folds=5, save_plots=True, use_saved_results=True):
+    def comprehensive_classifier_evaluation(self, test_size=0.3, cv_folds=5, use_saved_results=True):
         """
         Enhanced comprehensive evaluation that can use pre-computed training results
         """
@@ -1506,8 +1466,6 @@ class FixedMultiClassifierSystem:
                     # Generate enhanced comparison report
                     comparison_report = self._generate_enhanced_comparison_report(results, training_metadata)
                     results['comparison_report'] = comparison_report
-                    
-                    # Note: Plotting functionality removed to avoid threading issues
                     
                     return results
                 
@@ -1835,10 +1793,6 @@ class FixedMultiClassifierSystem:
         report += "\n" + "=" * 80 + "\n"
         
         return report
-    
-    # Enhanced plotting function removed to avoid threading issues
-    
-    # Plotting function removed to avoid threading issues
     
     def _rebuild_embeddings_from_database(self, max_images_per_person=10):
         """Rebuild embeddings and names from database with memory optimization"""

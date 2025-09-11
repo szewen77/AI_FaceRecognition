@@ -166,6 +166,33 @@ class FaceRecognitionGUI:
                                command=self.start_file_enrollment)
         files_btn.grid(row=2, column=0, columnspan=3, pady=10)
         
+        # Kaggle dataset enrollment section
+        kaggle_frame = ttk.LabelFrame(enrollment_frame, text="Kaggle Dataset Enrollment", padding=10)
+        kaggle_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(kaggle_frame, text="Dataset:").grid(row=0, column=0, sticky='w', pady=5)
+        self.kaggle_dataset_var = tk.StringVar(value="vasukipatel/face-recognition-dataset")
+        dataset_entry = tk.Entry(kaggle_frame, textvariable=self.kaggle_dataset_var, width=40)
+        dataset_entry.grid(row=0, column=1, padx=10, pady=5)
+        
+        tk.Label(kaggle_frame, text="Max People:").grid(row=1, column=0, sticky='w', pady=5)
+        self.kaggle_max_people_var = tk.StringVar(value="25")
+        people_spin = tk.Spinbox(kaggle_frame, from_=5, to=200, textvariable=self.kaggle_max_people_var, width=10)
+        people_spin.grid(row=1, column=1, sticky='w', padx=10, pady=5)
+        
+        tk.Label(kaggle_frame, text="Max Images/Person:").grid(row=1, column=2, sticky='w', padx=20, pady=5)
+        self.kaggle_max_images_var = tk.StringVar(value="15")
+        images_spin = tk.Spinbox(kaggle_frame, from_=5, to=50, textvariable=self.kaggle_max_images_var, width=10)
+        images_spin.grid(row=1, column=3, sticky='w', padx=10, pady=5)
+        
+        kaggle_btn = ttk.Button(kaggle_frame, text="🔗 Enroll from Kaggle Dataset", 
+                               command=self.start_kaggle_enrollment)
+        kaggle_btn.grid(row=2, column=0, columnspan=4, pady=10)
+        
+        # Help text for Kaggle enrollment
+        help_text = "Downloads and enrolls students from Kaggle face recognition datasets.\nRequires: pip install kagglehub"
+        tk.Label(kaggle_frame, text=help_text, font=('Arial', 8), fg='gray').grid(row=3, column=0, columnspan=4, pady=5)
+        
         # Enrollment log
         log_frame = ttk.LabelFrame(enrollment_frame, text="Enrollment Log", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
@@ -246,8 +273,6 @@ Camera Controls (when live window is active):
         ttk.Button(control_frame, text="🧹 Clean Low Samples", 
                   command=self.cleanup_low_samples).pack(side=tk.LEFT, padx=5)
         
-        ttk.Button(control_frame, text="👥 Add 100 More Students", 
-                  command=self.add_more_students).pack(side=tk.LEFT, padx=5)
         
         # Total users count
         self.total_users_label = tk.Label(control_frame, text="Total Users: 0", 
@@ -627,6 +652,109 @@ Camera Controls (when live window is active):
         thread = threading.Thread(target=enrollment_worker, daemon=True)
         thread.start()
 
+    def start_kaggle_enrollment(self):
+        """Start Kaggle dataset enrollment"""
+        if not self.is_initialized:
+            messagebox.showerror("Error", "System not initialized!")
+            return
+        
+        # Get parameters
+        dataset_name = self.kaggle_dataset_var.get().strip()
+        max_people = int(self.kaggle_max_people_var.get())
+        max_images = int(self.kaggle_max_images_var.get())
+        
+        if not dataset_name:
+            messagebox.showerror("Error", "Please enter a Kaggle dataset name!")
+            return
+        
+        # Confirm with user
+        confirm_msg = f"""Kaggle Dataset Enrollment
+        
+Dataset: {dataset_name}
+Max People: {max_people}
+Max Images per Person: {max_images}
+
+This will:
+1. Download the dataset from Kaggle
+2. Organize it for face recognition
+3. Enroll all people into the system
+4. Retrain all classifiers
+
+This may take several minutes. Continue?"""
+        
+        if not messagebox.askyesno("Confirm Kaggle Enrollment", confirm_msg):
+            return
+        
+        def kaggle_enrollment_worker():
+            try:
+                self.log_to_enrollment(f"🔄 Starting Kaggle dataset enrollment...")
+                self.log_to_enrollment(f"📦 Dataset: {dataset_name}")
+                self.log_to_enrollment(f"👥 Max people: {max_people}")
+                self.log_to_enrollment(f"🖼️ Max images per person: {max_images}")
+                self.log_to_enrollment(f"⏳ This may take several minutes...")
+                
+                # Call the system's Kaggle enrollment method
+                result = self.system.enroll_from_kaggle_dataset(
+                    dataset_name=dataset_name,
+                    max_people=max_people,
+                    max_images_per_person=max_images
+                )
+                
+                if result["success"]:
+                    enrolled_count = result["enrolled_count"]
+                    self.root.after(0, lambda: self.on_kaggle_enrollment_success(enrolled_count, result))
+                else:
+                    error_msg = result.get("error", "Unknown error")
+                    self.root.after(0, lambda: self.on_kaggle_enrollment_failed(error_msg))
+                    
+            except Exception as e:
+                self.root.after(0, lambda: self.on_kaggle_enrollment_error(str(e)))
+        
+        thread = threading.Thread(target=kaggle_enrollment_worker, daemon=True)
+        thread.start()
+    
+    def on_kaggle_enrollment_success(self, enrolled_count, result):
+        """Called when Kaggle enrollment succeeds"""
+        self.log_to_enrollment(f"✅ Kaggle dataset enrollment completed successfully!")
+        self.log_to_enrollment(f"👥 Enrolled {enrolled_count} people from Kaggle dataset")
+        
+        # Show dataset info if available
+        if "dataset_info" in result:
+            dataset_info = result["dataset_info"]
+            self.log_to_enrollment(f"📊 Dataset info: {dataset_info.get('total_files', 0)} total files, {dataset_info.get('image_files', 0)} images")
+        
+        if "organized_info" in result:
+            org_info = result["organized_info"]
+            self.log_to_enrollment(f"🎯 Processing results: {org_info.get('people_processed', 0)} people, {org_info.get('images_processed', 0)} images")
+        
+        self.log_to_enrollment("📊 All classifiers retrained with new Kaggle dataset")
+        
+        # Clear form
+        self.kaggle_dataset_var.set("vasukipatel/face-recognition-dataset")
+        self.kaggle_max_people_var.set("25")
+        self.kaggle_max_images_var.set("15")
+        
+        # Refresh displays
+        self.refresh_dashboard()
+        self.refresh_users_list()
+        
+        messagebox.showinfo("Success", f"Successfully enrolled {enrolled_count} people from Kaggle dataset!\n\nAll classifiers have been retrained.")
+    
+    def on_kaggle_enrollment_failed(self, error_msg):
+        """Called when Kaggle enrollment fails"""
+        self.log_to_enrollment(f"❌ Kaggle dataset enrollment failed: {error_msg}")
+        
+        if "kagglehub" in error_msg.lower():
+            messagebox.showerror("Missing Dependency", 
+                               f"Kaggle dataset integration requires kagglehub.\n\nPlease install it with:\npip install kagglehub\n\nError: {error_msg}")
+        else:
+            messagebox.showerror("Enrollment Failed", f"Failed to enroll from Kaggle dataset:\n\n{error_msg}")
+    
+    def on_kaggle_enrollment_error(self, error_msg):
+        """Called when Kaggle enrollment encounters an error"""
+        self.log_to_enrollment(f"❌ Kaggle dataset enrollment error: {error_msg}")
+        messagebox.showerror("Enrollment Error", f"Error during Kaggle dataset enrollment:\n\n{error_msg}")
+
     
     def start_live_attendance(self):
         """Start live attendance monitoring"""
@@ -985,8 +1113,7 @@ RECENT RECORDS (Last 20):
                 # Run the comprehensive evaluation
                 results = self.system.comprehensive_classifier_evaluation(
                     test_size=0.3, 
-                    cv_folds=5, 
-                    save_plots=True
+                    cv_folds=5
                 )
                 
                 # Close progress window
@@ -1515,99 +1642,6 @@ RECENT RECORDS (Last 20):
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save charts: {e}")
     
-    def add_more_students(self):
-        """Add 100 more students to the system"""
-        if not self.is_initialized:
-            messagebox.showerror("Error", "System not initialized!")
-            return
-        
-        # Get current student count
-        current_users = self.system.get_enrolled_users()
-        current_count = len(current_users)
-        
-        # Show confirmation dialog
-        result = messagebox.askyesno(
-            "👥 Add 100 More Students", 
-            f"Current students: {current_count}\n"
-            f"Adding: 100 more students\n"
-            f"Final total: {current_count + 100} students\n\n"
-            f"This will:\n"
-            f"• Add students from Original Images dataset\n"
-            f"• Add students from Faces dataset\n"
-            f"• Add students from LFW dataset if needed\n"
-            f"• Each student will have exactly 10 samples\n"
-            f"• Skip duplicate students (already enrolled)\n"
-            f"• Retrain all classifiers\n\n"
-            f"Continue?"
-        )
-        
-        if not result:
-            return
-        
-        # Show progress dialog
-        progress_window = tk.Toplevel(self.root)
-        progress_window.title("👥 Adding 100 More Students")
-        progress_window.geometry("600x200")
-        progress_window.transient(self.root)
-        progress_window.grab_set()
-        
-        # Center the window
-        progress_window.update_idletasks()
-        x = (progress_window.winfo_screenwidth() // 2) - (600 // 2)
-        y = (progress_window.winfo_screenheight() // 2) - (200 // 2)
-        progress_window.geometry(f"600x200+{x}+{y}")
-        
-        progress_label = tk.Label(progress_window, text="👥 Adding 100 more students from datasets...", 
-                                font=('Arial', 12))
-        progress_label.pack(pady=20)
-        
-        progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
-        progress_bar.pack(pady=10, padx=20, fill=tk.X)
-        progress_bar.start()
-        
-        def run_add_students():
-            try:
-                progress_window.after(0, lambda: progress_label.config(text="📊 Adding students from Original Images..."))
-                
-                # Add 100 more students
-                result = self.system.add_more_students(
-                    add_count=100,
-                    faces_dir='Faces/Faces',
-                    originals_dir='Original Images/Original Images',
-                    lfw_path='lfw-funneled/lfw_funneled',
-                    max_lfw_people=50
-                )
-                
-                progress_window.after(0, progress_window.destroy)
-                
-                # Show results
-                if result['target_reached']:
-                    message = (f"✅ SUCCESS! Added 100 more students!\n\n"
-                             f"📊 Previous students: {result['current']}\n"
-                             f"📈 Students added: {result['added']}\n"
-                             f"📊 Final total: {result['final']}\n\n"
-                             f"All students have been enrolled and system retrained!")
-                else:
-                    message = (f"⚠️ PARTIAL SUCCESS\n\n"
-                             f"📊 Previous students: {result['current']}\n"
-                             f"📈 Students added: {result['added']}\n"
-                             f"📊 Final total: {result['final']}\n\n"
-                             f"Could not add 100 students with available datasets.")
-                
-                self.root.after(0, lambda: messagebox.showinfo("Add Students Complete", message))
-                
-                # Refresh the users list
-                self.root.after(0, self.refresh_users_list)
-                
-            except Exception as e:
-                error_msg = str(e)
-                progress_window.after(0, progress_window.destroy)
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to add students: {error_msg}"))
-        
-        # Run in background thread
-        import threading
-        add_thread = threading.Thread(target=run_add_students, daemon=True)
-        add_thread.start()
     
     def show_system_status(self):
         """Show detailed system status including memory optimization info"""
